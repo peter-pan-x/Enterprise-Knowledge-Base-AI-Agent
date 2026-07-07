@@ -1,0 +1,15 @@
+# Backend
+backend/.venv/
+backend/.env
+backend/**/__pycache__/
+backend/**/*.pyc
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo
+
+# Local files
+.DS_Store
+Thumbs.db
+*.log
