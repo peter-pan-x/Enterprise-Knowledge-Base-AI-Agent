@@ -1,5 +1,17 @@
-import { FormEvent, useMemo, useState } from "react";
-import { Bot, CheckCircle2, MessageSquarePlus, Send, ThumbsDown, ThumbsUp, User } from "lucide-react";
+import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Bot,
+  CheckCircle2,
+  FileText,
+  MessageSquarePlus,
+  RefreshCw,
+  Send,
+  ThumbsDown,
+  ThumbsUp,
+  Trash2,
+  Upload,
+  User
+} from "lucide-react";
 
 type Role = "user" | "assistant";
 
@@ -9,19 +21,45 @@ type Message = {
   content: string;
 };
 
+type DocumentStatus = "processed" | "failed";
+
+type KnowledgeDocument = {
+  id: string;
+  filename: string;
+  content_type: string;
+  status: DocumentStatus;
+  size_bytes: number;
+  text_length: number;
+  created_at: string;
+  error_message?: string | null;
+};
+
 const starterMessages: Message[] = [
   {
     id: "welcome",
     role: "assistant",
     content:
-      "你好，我是企业知识库 AI 客服 Agent 的基础版本。当前阶段先打通聊天链路，后续会逐步接入文档上传、RAG 检索、引用来源和工具调用。"
+      "你好，我是企业知识库 AI 客服 Agent 的基础聊天版本。当前阶段已经开始接入知识库上传和文档解析，RAG 检索会在下一阶段加入。"
   }
 ];
+
+function formatFileSize(size: number) {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / 1024 / 1024).toFixed(1)} MB`;
+}
 
 function App() {
   const [messages, setMessages] = useState<Message[]>(starterMessages);
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
+  const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [documentError, setDocumentError] = useState("");
+  const [preview, setPreview] = useState("");
+  const [previewTitle, setPreviewTitle] = useState("");
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const history = useMemo(
     () =>
@@ -30,6 +68,22 @@ function App() {
         .map((message) => ({ role: message.role, content: message.content })),
     [messages]
   );
+
+  async function loadDocuments() {
+    setDocumentError("");
+    try {
+      const response = await fetch("/api/documents");
+      if (!response.ok) throw new Error("文档列表加载失败");
+      const data = (await response.json()) as { documents: KnowledgeDocument[] };
+      setDocuments(data.documents);
+    } catch (error) {
+      setDocumentError(error instanceof Error ? error.message : "文档列表加载失败");
+    }
+  }
+
+  useEffect(() => {
+    void loadDocuments();
+  }, []);
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -101,10 +155,73 @@ function App() {
     }
   }
 
+  async function handleUpload(event: FormEvent) {
+    event.preventDefault();
+    if (!selectedFile || isUploading) return;
+
+    setIsUploading(true);
+    setDocumentError("");
+
+    const formData = new FormData();
+    formData.append("file", selectedFile);
+
+    try {
+      const response = await fetch("/api/documents", {
+        method: "POST",
+        body: formData
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => null);
+        throw new Error(data?.detail ?? "文档上传失败");
+      }
+      setSelectedFile(null);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+      await loadDocuments();
+    } catch (error) {
+      setDocumentError(error instanceof Error ? error.message : "文档上传失败");
+    } finally {
+      setIsUploading(false);
+    }
+  }
+
+  async function handlePreview(document: KnowledgeDocument) {
+    setDocumentError("");
+    try {
+      const response = await fetch(`/api/documents/${document.id}/preview`);
+      if (!response.ok) throw new Error("解析预览加载失败");
+      const data = (await response.json()) as { preview: string };
+      setPreviewTitle(document.filename);
+      setPreview(data.preview || "这个文档没有解析出可预览文本。");
+    } catch (error) {
+      setDocumentError(error instanceof Error ? error.message : "解析预览加载失败");
+    }
+  }
+
+  async function handleDelete(document: KnowledgeDocument) {
+    setDocumentError("");
+    try {
+      const response = await fetch(`/api/documents/${document.id}`, { method: "DELETE" });
+      if (!response.ok) throw new Error("文档删除失败");
+      if (previewTitle === document.filename) {
+        setPreview("");
+        setPreviewTitle("");
+      }
+      await loadDocuments();
+    } catch (error) {
+      setDocumentError(error instanceof Error ? error.message : "文档删除失败");
+    }
+  }
+
   function startNewConversation() {
     if (isStreaming) return;
     setMessages(starterMessages);
     setInput("");
+  }
+
+  function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
+    setSelectedFile(event.target.files?.[0] ?? null);
   }
 
   return (
@@ -114,7 +231,7 @@ function App() {
           <div className="brandMark">EA</div>
           <div>
             <strong>Knowledge Agent</strong>
-            <span>基础聊天版本</span>
+            <span>通用基础版</span>
           </div>
         </div>
 
@@ -126,9 +243,9 @@ function App() {
         <section className="phasePanel" aria-label="当前阶段">
           <div className="phaseTitle">
             <CheckCircle2 size={16} />
-            Phase 1
+            Phase 2
           </div>
-          <p>先打通前后端聊天链路，再逐步接入文档上传、RAG 和工具调用。</p>
+          <p>当前阶段做知识库上传和文档解析。RAG 检索、Embedding 和 Chroma 会在下一阶段接入。</p>
         </section>
       </aside>
 
@@ -136,51 +253,124 @@ function App() {
         <header className="chatHeader">
           <div>
             <h1>企业知识库 AI 客服 Agent</h1>
-            <p>当前版本用于验证基础聊天流程，RAG 能力将在下一阶段加入。</p>
+            <p>先完成基础聊天和文档进入系统，再逐步接入 RAG 问答、引用来源和工具调用。</p>
           </div>
-          <div className="statusPill">Demo v0.1</div>
+          <div className="statusPill">Demo v0.2</div>
         </header>
 
-        <div className="messages">
-          {messages.map((message) => (
-            <article className={`message ${message.role}`} key={message.id}>
-              <div className="avatar" aria-hidden="true">
-                {message.role === "assistant" ? <Bot size={18} /> : <User size={18} />}
-              </div>
-              <div className="bubble">
-                <p>{message.content || "正在生成回复..."}</p>
-                {message.role === "assistant" && message.content && (
-                  <div className="feedback">
-                    <button type="button" title="有帮助">
-                      <ThumbsUp size={15} />
-                    </button>
-                    <button type="button" title="没帮助">
-                      <ThumbsDown size={15} />
-                    </button>
+        <div className="workspace">
+          <section className="conversation" aria-label="聊天窗口">
+            <div className="messages">
+              {messages.map((message) => (
+                <article className={`message ${message.role}`} key={message.id}>
+                  <div className="avatar" aria-hidden="true">
+                    {message.role === "assistant" ? <Bot size={18} /> : <User size={18} />}
                   </div>
-                )}
-              </div>
-            </article>
-          ))}
-        </div>
+                  <div className="bubble">
+                    <p>{message.content || "正在生成回复..."}</p>
+                    {message.role === "assistant" && message.content && (
+                      <div className="feedback">
+                        <button type="button" title="有帮助">
+                          <ThumbsUp size={15} />
+                        </button>
+                        <button type="button" title="没帮助">
+                          <ThumbsDown size={15} />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </article>
+              ))}
+            </div>
 
-        <form className="composer" onSubmit={handleSubmit}>
-          <textarea
-            value={input}
-            onChange={(event) => setInput(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                void handleSubmit(event);
-              }
-            }}
-            placeholder="输入一个客服问题，先验证基础聊天链路..."
-            rows={2}
-          />
-          <button type="submit" disabled={isStreaming || !input.trim()} title="发送">
-            <Send size={20} />
-          </button>
-        </form>
+            <form className="composer" onSubmit={handleSubmit}>
+              <textarea
+                value={input}
+                onChange={(event) => setInput(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    void handleSubmit(event);
+                  }
+                }}
+                placeholder="输入一个客服问题，先验证基础聊天链路..."
+                rows={2}
+              />
+              <button type="submit" disabled={isStreaming || !input.trim()} title="发送">
+                <Send size={20} />
+              </button>
+            </form>
+          </section>
+
+          <aside className="knowledgePanel" aria-label="知识库管理">
+            <div className="panelHeader">
+              <div>
+                <h2>知识库</h2>
+                <p>上传 PDF、TXT 或 Markdown，先完成解析入库。</p>
+              </div>
+              <button className="iconButton" type="button" onClick={() => void loadDocuments()} title="刷新">
+                <RefreshCw size={18} />
+              </button>
+            </div>
+
+            <form className="uploadBox" onSubmit={handleUpload}>
+              <label>
+                <Upload size={18} />
+                <span>{selectedFile ? selectedFile.name : "选择文档"}</span>
+                <input
+                  accept=".pdf,.txt,.md,.markdown"
+                  ref={fileInputRef}
+                  type="file"
+                  onChange={handleFileChange}
+                />
+              </label>
+              <button type="submit" disabled={!selectedFile || isUploading}>
+                {isUploading ? "上传中" : "上传解析"}
+              </button>
+            </form>
+
+            {documentError && <div className="errorBox">{documentError}</div>}
+
+            <div className="documentList">
+              {documents.length === 0 ? (
+                <div className="emptyState">还没有文档。先上传一份售后政策、FAQ 或产品说明。</div>
+              ) : (
+                documents.map((document) => (
+                  <article className="documentItem" key={document.id}>
+                    <div className="documentIcon">
+                      <FileText size={18} />
+                    </div>
+                    <div className="documentBody">
+                      <strong>{document.filename}</strong>
+                      <span>
+                        {formatFileSize(document.size_bytes)} · 解析文本 {document.text_length} 字
+                      </span>
+                      <span className={`docStatus ${document.status}`}>
+                        {document.status === "processed" ? "已解析" : "解析失败"}
+                      </span>
+                      {document.error_message && <small>{document.error_message}</small>}
+                      <div className="documentActions">
+                        <button type="button" onClick={() => void handlePreview(document)}>
+                          查看解析
+                        </button>
+                        <button type="button" onClick={() => void handleDelete(document)} title="删除">
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
+                    </div>
+                  </article>
+                ))
+              )}
+            </div>
+
+            {previewTitle && (
+              <section className="previewBox">
+                <div className="previewTitle">{previewTitle}</div>
+                <pre>{preview}</pre>
+              </section>
+            )}
+          </aside>
+        </div>
       </section>
     </main>
   );
