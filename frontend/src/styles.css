@@ -229,6 +229,46 @@ button {
   margin-top: 12px;
 }
 
+.sourceList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.sourceTitle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #0f766e;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.sourceItem {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #334155;
+}
+
+.sourceItem strong {
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.sourceItem span,
+.sourceItem small {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .feedback button,
 .iconButton {
   display: grid;
@@ -245,6 +285,11 @@ button {
 .feedback button:hover,
 .iconButton:hover {
   background: #eef2f6;
+}
+
+.iconButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .composer {
@@ -304,6 +349,11 @@ button {
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
+}
+
+.panelActions {
+  display: flex;
+  gap: 8px;
 }
 
 .uploadBox {

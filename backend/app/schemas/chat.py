@@ -1,5 +1,7 @@
 from pydantic import BaseModel, Field
 
+from app.schemas.rag import RagSource
+
 
 class ChatMessage(BaseModel):
     role: str = Field(pattern="^(user|assistant|system)$")
@@ -13,3 +15,4 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     answer: str
+    sources: list[RagSource] = Field(default_factory=list)

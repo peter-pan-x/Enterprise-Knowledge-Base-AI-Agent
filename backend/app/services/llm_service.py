@@ -5,45 +5,78 @@ import httpx
 
 from app.core.config import settings
 from app.schemas.chat import ChatRequest
+from app.schemas.rag import RagSource
 
-SYSTEM_PROMPT = """你是企业知识库 AI 客服 Agent 的基础聊天版本。
-当前阶段还没有接入 RAG 知识库，所以你需要清楚说明能力边界。
+RAG_SYSTEM_PROMPT = """你是企业知识库 AI 客服 Agent。
+你必须优先基于提供的企业知识库片段回答用户问题。
 
 回答要求：
 1. 使用简洁、专业的中文。
-2. 可以帮助用户梳理问题、解释系统能力和下一步计划。
-3. 不要假装已经检索企业知识库。
-4. 如果问题需要企业文档依据，请说明后续 RAG 模块接入后可以基于文档回答。
+2. 只依据“知识库片段”回答，不要编造片段中没有的信息。
+3. 如果片段不足以回答，明确说明“知识库中没有找到明确依据”。
+4. 回答末尾用“来源：”列出使用到的文档名和片段编号。
 """
 
 
-async def stream_chat_completion(request: ChatRequest):
-    if not settings.llm_api_key:
-        async for chunk in _stream_demo_answer(request.message):
+async def stream_chat_completion(request: ChatRequest, sources: list[RagSource] | None = None):
+    sources = sources or []
+    if not sources:
+        async for chunk in _stream_no_context_answer():
             yield chunk
         return
 
-    async for chunk in _stream_openai_compatible_answer(request):
+    if not settings.llm_api_key:
+        async for chunk in _stream_demo_rag_answer(sources):
+            yield chunk
+        return
+
+    async for chunk in _stream_openai_compatible_answer(request, sources):
         yield chunk
 
 
-async def _stream_demo_answer(message: str):
+async def _stream_no_context_answer():
     answer = (
-        "基础聊天链路已经打通。"
-        "当前版本还没有接入企业知识库和 RAG，所以我不会假装检索了文档。"
-        f"你刚才的问题是：“{message}”。"
-        "下一阶段会加入文档上传、解析、切片、向量检索和引用来源展示，"
-        "这样就可以基于真实企业资料回答。"
+        "知识库中没有找到与该问题匹配的明确依据。"
+        "为了避免编造答案，我暂时不能直接回答。"
+        "你可以补充相关企业文档，或换一种更具体的问法后再试。"
     )
     for token in answer:
-        await asyncio.sleep(0.015)
+        await asyncio.sleep(0.01)
         yield token
 
 
-async def _stream_openai_compatible_answer(request: ChatRequest):
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-    messages.extend(message.model_dump() for message in request.history[-10:])
-    messages.append({"role": "user", "content": request.message})
+async def _stream_demo_rag_answer(sources: list[RagSource]):
+    used_sources = sources[:2]
+    lines = ["根据已上传知识库资料，可以先给出以下回答："]
+    for index, source in enumerate(used_sources, start=1):
+        lines.append(f"{index}. {source.preview}")
+    lines.append("")
+    lines.append(
+        "以上回答来自当前召回的知识库片段。后续接入真实 DeepSeek API Key 后，"
+        "系统会把这些片段注入 Prompt，由模型生成更自然的客服回复。"
+    )
+    lines.append("")
+    lines.append(
+        "来源："
+        + "；".join(
+            f"{source.filename}，片段 {source.chunk_index + 1}" for source in used_sources
+        )
+    )
+    answer = "\n".join(lines)
+    for token in answer:
+        await asyncio.sleep(0.01)
+        yield token
+
+
+async def _stream_openai_compatible_answer(request: ChatRequest, sources: list[RagSource]):
+    messages = [{"role": "system", "content": RAG_SYSTEM_PROMPT}]
+    messages.extend(message.model_dump() for message in request.history[-8:])
+    messages.append(
+        {
+            "role": "user",
+            "content": _build_rag_user_prompt(request.message, sources),
+        }
+    )
 
     payload = {
         "model": settings.llm_model,
@@ -73,3 +106,21 @@ async def _stream_openai_compatible_answer(request: ChatRequest):
                 content = delta.get("content")
                 if content:
                     yield content
+
+
+def _build_rag_user_prompt(question: str, sources: list[RagSource]) -> str:
+    context_blocks = []
+    for index, source in enumerate(sources, start=1):
+        page_text = f"，页码 {source.page_number}" if source.page_number else ""
+        context_blocks.append(
+            f"[片段 {index}] 文档：{source.filename}{page_text}，chunk_index：{source.chunk_index}\n"
+            f"{source.preview}"
+        )
+
+    return (
+        "用户问题：\n"
+        f"{question}\n\n"
+        "知识库片段：\n"
+        + "\n\n".join(context_blocks)
+        + "\n\n请基于上述片段回答，并在末尾列出来源。"
+    )

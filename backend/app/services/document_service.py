@@ -120,6 +120,32 @@ async def save_uploaded_document(file: UploadFile) -> DocumentRecord:
     records = _load_records()
     records.insert(0, record)
     _save_records(records)
+
+    if record.status == "processed":
+        from app.services.rag_service import index_document
+
+        try:
+            indexed_chunks = index_document(record)
+            record = record.model_copy(
+                update={
+                    "index_status": "indexed" if indexed_chunks else "failed",
+                    "indexed_chunks": indexed_chunks,
+                    "index_error_message": None if indexed_chunks else "文档未生成可索引片段",
+                }
+            )
+        except Exception as exc:
+            record = record.model_copy(
+                update={
+                    "index_status": "failed",
+                    "index_error_message": f"文档解析成功，但索引失败：{exc}",
+                }
+            )
+            records[0] = record
+            _save_records(records)
+        else:
+            records[0] = record
+            _save_records(records)
+
     return record
 
 
@@ -147,6 +173,9 @@ def delete_document(document_id: str) -> None:
     if len(next_records) == len(records):
         raise DocumentServiceError("文档不存在")
 
+    from app.services.rag_service import delete_document_index
+
+    delete_document_index(document_id)
     for path in UPLOAD_DIR.glob(f"{document_id}.*"):
         if path.is_file():
             path.unlink(missing_ok=True)

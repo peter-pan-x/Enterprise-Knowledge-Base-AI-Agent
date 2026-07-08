@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 
 DocumentStatus = Literal["processed", "failed"]
+DocumentIndexStatus = Literal["not_indexed", "indexed", "failed"]
 
 
 class DocumentRecord(BaseModel):
@@ -16,6 +17,9 @@ class DocumentRecord(BaseModel):
     text_length: int
     created_at: datetime
     error_message: str | None = None
+    index_status: DocumentIndexStatus = "not_indexed"
+    indexed_chunks: int = 0
+    index_error_message: str | None = None
 
 
 class DocumentListResponse(BaseModel):

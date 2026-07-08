@@ -2,6 +2,7 @@ import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "re
 import {
   Bot,
   CheckCircle2,
+  Database,
   FileText,
   MessageSquarePlus,
   RefreshCw,
@@ -15,13 +16,25 @@ import {
 
 type Role = "user" | "assistant";
 
+type RagSource = {
+  document_id: string;
+  filename: string;
+  chunk_id: string;
+  chunk_index: number;
+  page_number?: number | null;
+  score: number;
+  preview: string;
+};
+
 type Message = {
   id: string;
   role: Role;
   content: string;
+  sources?: RagSource[];
 };
 
 type DocumentStatus = "processed" | "failed";
+type DocumentIndexStatus = "not_indexed" | "indexed" | "failed";
 
 type KnowledgeDocument = {
   id: string;
@@ -32,6 +45,9 @@ type KnowledgeDocument = {
   text_length: number;
   created_at: string;
   error_message?: string | null;
+  index_status: DocumentIndexStatus;
+  indexed_chunks: number;
+  index_error_message?: string | null;
 };
 
 const starterMessages: Message[] = [
@@ -39,7 +55,7 @@ const starterMessages: Message[] = [
     id: "welcome",
     role: "assistant",
     content:
-      "你好，我是企业知识库 AI 客服 Agent 的基础聊天版本。当前阶段已经开始接入知识库上传和文档解析，RAG 检索会在下一阶段加入。"
+      "你好，我是企业知识库 AI 客服 Agent。当前阶段已经接入基础 RAG：上传文档后，我会先检索知识库，再基于命中的片段回答，并展示引用来源。"
   }
 ];
 
@@ -56,6 +72,7 @@ function App() {
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [isReindexing, setIsReindexing] = useState(false);
   const [documentError, setDocumentError] = useState("");
   const [preview, setPreview] = useState("");
   const [previewTitle, setPreviewTitle] = useState("");
@@ -100,7 +117,7 @@ function App() {
     setMessages((current) => [
       ...current,
       userMessage,
-      { id: assistantId, role: "assistant", content: "" }
+      { id: assistantId, role: "assistant", content: "", sources: [] }
     ]);
     setInput("");
     setIsStreaming(true);
@@ -132,6 +149,13 @@ function App() {
           const line = eventText.split("\n").find((item) => item.startsWith("data: "));
           if (!line) continue;
           const eventData = JSON.parse(line.slice(6));
+          if (eventData.type === "sources") {
+            setMessages((current) =>
+              current.map((message) =>
+                message.id === assistantId ? { ...message, sources: eventData.sources } : message
+              )
+            );
+          }
           if (eventData.type === "delta") {
             setMessages((current) =>
               current.map((message) =>
@@ -214,6 +238,20 @@ function App() {
     }
   }
 
+  async function handleReindex() {
+    setIsReindexing(true);
+    setDocumentError("");
+    try {
+      const response = await fetch("/api/rag/reindex", { method: "POST" });
+      if (!response.ok) throw new Error("重新索引失败");
+      await loadDocuments();
+    } catch (error) {
+      setDocumentError(error instanceof Error ? error.message : "重新索引失败");
+    } finally {
+      setIsReindexing(false);
+    }
+  }
+
   function startNewConversation() {
     if (isStreaming) return;
     setMessages(starterMessages);
@@ -231,7 +269,7 @@ function App() {
           <div className="brandMark">EA</div>
           <div>
             <strong>Knowledge Agent</strong>
-            <span>通用基础版</span>
+            <span>RAG 基础版</span>
           </div>
         </div>
 
@@ -243,9 +281,9 @@ function App() {
         <section className="phasePanel" aria-label="当前阶段">
           <div className="phaseTitle">
             <CheckCircle2 size={16} />
-            Phase 2
+            Phase 3
           </div>
-          <p>当前阶段做知识库上传和文档解析。RAG 检索、Embedding 和 Chroma 会在下一阶段接入。</p>
+          <p>当前阶段完成基础 RAG 闭环：切片、Embedding、Chroma 检索、基于文档回答、引用来源和无依据拒答。</p>
         </section>
       </aside>
 
@@ -253,9 +291,9 @@ function App() {
         <header className="chatHeader">
           <div>
             <h1>企业知识库 AI 客服 Agent</h1>
-            <p>先完成基础聊天和文档进入系统，再逐步接入 RAG 问答、引用来源和工具调用。</p>
+            <p>上传企业文档后，系统会自动建立基础索引，并在回答中展示命中的知识来源。</p>
           </div>
-          <div className="statusPill">Demo v0.2</div>
+          <div className="statusPill">Demo v0.3</div>
         </header>
 
         <div className="workspace">
@@ -267,7 +305,26 @@ function App() {
                     {message.role === "assistant" ? <Bot size={18} /> : <User size={18} />}
                   </div>
                   <div className="bubble">
-                    <p>{message.content || "正在生成回复..."}</p>
+                    <p>{message.content || "正在检索知识库并生成回复..."}</p>
+                    {message.role === "assistant" && message.sources && message.sources.length > 0 && (
+                      <div className="sourceList">
+                        <div className="sourceTitle">
+                          <Database size={15} />
+                          引用来源
+                        </div>
+                        {message.sources.map((source) => (
+                          <div className="sourceItem" key={source.chunk_id}>
+                            <strong>{source.filename}</strong>
+                            <span>
+                              片段 {source.chunk_index + 1}
+                              {source.page_number ? ` · 第 ${source.page_number} 页` : ""} · 相似度{" "}
+                              {(source.score * 100).toFixed(0)}%
+                            </span>
+                            <small>{source.preview}</small>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                     {message.role === "assistant" && message.content && (
                       <div className="feedback">
                         <button type="button" title="有帮助">
@@ -293,7 +350,7 @@ function App() {
                     void handleSubmit(event);
                   }
                 }}
-                placeholder="输入一个客服问题，先验证基础聊天链路..."
+                placeholder="输入一个客服问题，例如：7 天内可以退款吗？"
                 rows={2}
               />
               <button type="submit" disabled={isStreaming || !input.trim()} title="发送">
@@ -306,11 +363,22 @@ function App() {
             <div className="panelHeader">
               <div>
                 <h2>知识库</h2>
-                <p>上传 PDF、TXT 或 Markdown，先完成解析入库。</p>
+                <p>上传 PDF、TXT 或 Markdown。解析成功后会自动切片、向量化并写入 Chroma。</p>
               </div>
-              <button className="iconButton" type="button" onClick={() => void loadDocuments()} title="刷新">
-                <RefreshCw size={18} />
-              </button>
+              <div className="panelActions">
+                <button className="iconButton" type="button" onClick={() => void loadDocuments()} title="刷新">
+                  <RefreshCw size={18} />
+                </button>
+                <button
+                  className="iconButton"
+                  type="button"
+                  onClick={() => void handleReindex()}
+                  disabled={isReindexing}
+                  title="重建索引"
+                >
+                  <Database size={18} />
+                </button>
+              </div>
             </div>
 
             <form className="uploadBox" onSubmit={handleUpload}>
@@ -346,9 +414,14 @@ function App() {
                         {formatFileSize(document.size_bytes)} · 解析文本 {document.text_length} 字
                       </span>
                       <span className={`docStatus ${document.status}`}>
-                        {document.status === "processed" ? "已解析" : "解析失败"}
+                        {document.status === "processed"
+                          ? document.index_status === "indexed"
+                            ? `已索引 ${document.indexed_chunks} 个片段`
+                            : "待索引"
+                          : "解析失败"}
                       </span>
                       {document.error_message && <small>{document.error_message}</small>}
+                      {document.index_error_message && <small>{document.index_error_message}</small>}
                       <div className="documentActions">
                         <button type="button" onClick={() => void handlePreview(document)}>
                           查看解析

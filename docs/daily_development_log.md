@@ -201,3 +201,129 @@
 
 - 提交并推送当前阶段成果。
 - 下一阶段开始开发 RAG 核心闭环。
+
+---
+
+## 2026-07-08 阶段 3 基础 RAG 闭环开发
+
+### 开发阶段
+
+- 阶段 3：RAG 核心闭环
+
+### 完成内容
+
+- 新增基础 Embedding 服务。
+  - 当前默认使用本地 deterministic embedding，保证无外部 API Key 时也能跑通 Demo。
+  - 后续可以替换为真实 Embedding API。
+- 新增 Chroma 向量库接入。
+  - 本地持久化目录：`backend/data/chroma`
+  - 上传文档解析成功后自动切片、向量化并写入 Chroma。
+- 新增文本切片能力。
+  - 支持固定长度切片。
+  - 支持 chunk overlap。
+  - 支持基础 metadata：`document_id`、`filename`、`chunk_index`、`page_number`、`created_at`。
+- 新增 RAG 检索接口。
+  - `POST /api/rag/search`
+  - `POST /api/rag/reindex`
+- 改造聊天接口。
+  - 用户提问时先检索知识库。
+  - 命中片段后将片段注入 Prompt。
+  - 无命中片段时明确拒答，不编造。
+  - 普通接口返回 `answer + sources`。
+  - 流式接口先返回 `sources` 事件，再返回回答增量。
+- 前端升级到 Phase 3。
+  - 展示 RAG 引用来源。
+  - 展示文档名、片段编号、页码和相似度。
+  - 增加手动重建索引按钮。
+
+### 关键变更
+
+- 新增 `backend/app/services/embedding_service.py`
+- 新增 `backend/app/services/rag_service.py`
+- 新增 `backend/app/api/rag.py`
+- 新增 `backend/app/schemas/rag.py`
+- 更新 `backend/app/api/chat.py`
+- 更新 `backend/app/services/llm_service.py`
+- 更新 `backend/app/services/document_service.py`
+- 更新 `backend/app/core/config.py`
+- 更新 `backend/requirements.txt`，加入 `chromadb`
+- 更新 `frontend/src/App.tsx`
+- 更新 `frontend/src/styles.css`
+
+### 验证结果
+
+- 后端编译通过：`python -m compileall app`
+- 前端构建通过：`npm run build`
+- 空知识库提问时返回无依据拒答，`sources` 为空。
+- 上传售后政策 TXT 后自动索引成功。
+- RAG 检索能召回相关 chunk。
+- 聊天接口能返回回答和引用来源。
+- 删除文档后同步删除本地文档和向量索引。
+
+### 遇到的问题
+
+- 初次接入 Chroma 时，metadata 中的 `page_number=None` 导致 Chroma 写入失败；已改为存储 `0`，展示时再转换为空。
+- Chroma 首次安装依赖较多，安装耗时较长；当前已安装成功。
+- 为避免索引失败导致上传接口 500，已增加保护：解析成功但索引失败时，文档状态会变为 `failed` 并记录错误原因。
+
+### 当前结论
+
+- 阶段 3 的基础 RAG 闭环已经打通。
+- 当前版本已经可以演示：上传文档 -> 自动切片入库 -> 用户提问 -> 检索相关片段 -> 基于片段回答 -> 展示引用来源 -> 无依据拒答。
+
+### 下一步
+
+- 继续完善阶段 3 的展示质量和 RAG 细节。
+- 可选增强：
+  - 更好的 chunk 展示。
+  - 更精细的相似度阈值。
+  - RAG 检索日志持久化。
+  - 接入真实 Embedding API。
+  - 准备一组标准测试文档和测试问题。
+
+---
+
+## 2026-07-08 阶段 3 Review 与补强
+
+### Review 结论
+
+- 阶段 3 基础 RAG 闭环已经完成。
+- Review 中发现两个阶段 3 验收相关缺口，并已补齐：
+  - 文档缺少索引状态和索引 chunk 数。
+  - 缺少基础 RAG 检索日志。
+
+### 修复内容
+
+- 文档记录新增：
+  - `index_status`
+  - `indexed_chunks`
+  - `index_error_message`
+- 上传文档解析成功后，会记录索引结果。
+- 前端文档列表展示“已索引 N 个片段”。
+- 新增轻量 RAG 日志：
+  - 查询问题
+  - Top-K 参数
+  - 命中来源数量
+  - 命中的来源片段
+  - 创建时间
+- 新增接口：`GET /api/rag/logs`
+- 将仓库根目录的 `key.txt` 加入 `.gitignore`，避免误提交本地密钥文件。
+
+### 验证结果
+
+- 后端编译通过：`python -m compileall backend/app`
+- 前端构建通过：`npm run build`
+- 上传售后政策 TXT 后：
+  - `status=processed`
+  - `index_status=indexed`
+  - `indexed_chunks=1`
+- 相关问题能召回知识片段。
+- 聊天接口能返回回答和来源。
+- 无关问题不召回来源，并触发无依据拒答。
+- `/api/rag/logs` 可以返回检索日志。
+- 删除测试文档后，文档列表为空。
+
+### 当前结论
+
+- 阶段 3 现在满足基础版验收要求。
+- 后续仍可增强真实 Embedding、检索质量、RAG 日志后台页面和标准测试集，但这些不阻塞阶段 3 基础完成。

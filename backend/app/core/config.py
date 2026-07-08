@@ -16,6 +16,11 @@ class Settings:
     llm_model: str = os.getenv("LLM_MODEL", "deepseek-chat")
     llm_temperature: float = float(os.getenv("LLM_TEMPERATURE", "0.3"))
     llm_max_tokens: int = int(os.getenv("LLM_MAX_TOKENS", "800"))
+    rag_chunk_size: int = int(os.getenv("RAG_CHUNK_SIZE", "700"))
+    rag_chunk_overlap: int = int(os.getenv("RAG_CHUNK_OVERLAP", "120"))
+    rag_top_k: int = int(os.getenv("RAG_TOP_K", "4"))
+    rag_min_score: float = float(os.getenv("RAG_MIN_SCORE", "0.12"))
+    embedding_dimension: int = int(os.getenv("EMBEDDING_DIMENSION", "384"))
 
 
 settings = Settings()
