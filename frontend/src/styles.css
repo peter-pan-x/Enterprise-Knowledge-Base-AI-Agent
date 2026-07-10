@@ -88,11 +88,65 @@ button {
 }
 
 .phasePanel {
-  margin-top: auto;
   padding: 16px;
   border: 1px solid #314151;
   border-radius: 8px;
   background: #162330;
+}
+
+.historyPanel {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.historyTitle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #cbd5e1;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.historyList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+}
+
+.historyList button {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  padding: 10px 11px;
+  border-radius: 8px;
+  background: transparent;
+  color: #e2e8f0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.historyList button:hover,
+.historyList button.active {
+  background: #1b2937;
+}
+
+.historyList strong {
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.historyList small,
+.historyEmpty {
+  color: #94a3b8;
+  font-size: 12px;
 }
 
 .phaseTitle {
@@ -116,6 +170,162 @@ button {
   min-width: 0;
   min-height: 100vh;
   background: #f8fafc;
+}
+
+.adminPanel {
+  min-width: 0;
+  min-height: 100vh;
+  background: #f8fafc;
+}
+
+.adminRefresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  background: #0f766e;
+  color: #fff;
+  cursor: pointer;
+}
+
+.adminContent {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 28px 32px;
+}
+
+.metricGrid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.metricCard {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 18px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.metricCard span {
+  color: #64748b;
+  font-size: 13px;
+}
+
+.metricCard strong {
+  color: #0f172a;
+  font-size: 28px;
+}
+
+.adminGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.adminList {
+  min-width: 0;
+  padding: 18px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.adminList h2 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 0 12px;
+  font-size: 16px;
+}
+
+.adminList h2 span {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #e0f2fe;
+  color: #0369a1;
+  font-size: 12px;
+}
+
+.adminList article {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 0;
+  border-top: 1px solid #f1f5f9;
+}
+
+.adminConversation {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  padding: 10px 0;
+  border-top: 1px solid #f1f5f9;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.adminConversation:hover strong {
+  color: #0f766e;
+}
+
+.adminConversation small {
+  color: #64748b;
+}
+
+.conversationInspector {
+  padding: 20px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.conversationInspector h2 {
+  margin: 0 0 14px;
+  font-size: 17px;
+}
+
+.conversationInspector article {
+  padding: 12px 0;
+  border-top: 1px solid #f1f5f9;
+}
+
+.conversationInspector p {
+  margin: 5px 0;
+  white-space: pre-wrap;
+  line-height: 1.6;
+}
+
+.conversationInspector small {
+  color: #0f766e;
+}
+
+.adminList article strong {
+  overflow-wrap: anywhere;
+  font-size: 14px;
+}
+
+.adminList article small {
+  overflow: hidden;
+  color: #64748b;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gapAction {
+  align-self: flex-start;
+  padding: 6px 9px;
+  border-radius: 6px;
+  background: #e0f2fe;
+  color: #0369a1;
+  cursor: pointer;
 }
 
 .chatHeader {
@@ -223,6 +433,17 @@ button {
   line-height: 1.7;
 }
 
+.toolBadge {
+  width: fit-content;
+  margin-top: 10px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .feedback {
   display: flex;
   gap: 6px;
@@ -280,6 +501,19 @@ button {
   background: #f8fafc;
   color: #475569;
   cursor: pointer;
+}
+
+.feedback button.selected {
+  border-color: #5eead4;
+  background: #ccfbf1;
+  color: #0f766e;
+}
+
+.feedback .handoffButton {
+  display: inline-flex;
+  width: auto;
+  padding: 0 9px;
+  gap: 5px;
 }
 
 .feedback button:hover,
@@ -523,6 +757,10 @@ button {
 }
 
 @media (max-width: 1100px) {
+  .metricGrid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
   .workspace {
     grid-template-columns: 1fr;
   }
@@ -544,6 +782,7 @@ button {
   }
 
   .chatHeader,
+  .adminContent,
   .messages,
   .composer,
   .knowledgePanel {
@@ -571,6 +810,11 @@ button {
   }
 
   .uploadBox {
+    grid-template-columns: 1fr;
+  }
+
+  .metricGrid,
+  .adminGrid {
     grid-template-columns: 1fr;
   }
 }

@@ -1,6 +1,9 @@
 import json
+import os
 import re
 import shutil
+import tempfile
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
@@ -8,7 +11,7 @@ from uuid import uuid4
 from fastapi import UploadFile
 from pypdf import PdfReader
 
-from app.schemas.document import DocumentRecord
+from app.schemas.document import DocumentIndexStatus, DocumentRecord
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 DATA_DIR = BASE_DIR / "data"
@@ -18,6 +21,7 @@ METADATA_PATH = DATA_DIR / "documents.json"
 
 ALLOWED_EXTENSIONS = {".pdf", ".txt", ".md", ".markdown"}
 MAX_UPLOAD_SIZE_BYTES = 15 * 1024 * 1024
+_METADATA_LOCK = threading.RLock()
 
 
 class DocumentServiceError(Exception):
@@ -25,22 +29,47 @@ class DocumentServiceError(Exception):
 
 
 def _ensure_storage() -> None:
-    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    TEXT_DIR.mkdir(parents=True, exist_ok=True)
-    if not METADATA_PATH.exists():
-        METADATA_PATH.write_text("[]", encoding="utf-8")
+    with _METADATA_LOCK:
+        UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        TEXT_DIR.mkdir(parents=True, exist_ok=True)
+        if not METADATA_PATH.exists():
+            _atomic_write_json(METADATA_PATH, [])
 
 
 def _load_records() -> list[DocumentRecord]:
-    _ensure_storage()
-    raw = json.loads(METADATA_PATH.read_text(encoding="utf-8"))
-    return [DocumentRecord.model_validate(item) for item in raw]
+    with _METADATA_LOCK:
+        _ensure_storage()
+        raw = json.loads(METADATA_PATH.read_text(encoding="utf-8"))
+        return [DocumentRecord.model_validate(item) for item in raw]
 
 
 def _save_records(records: list[DocumentRecord]) -> None:
-    _ensure_storage()
-    payload = [record.model_dump(mode="json") for record in records]
-    METADATA_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    with _METADATA_LOCK:
+        _ensure_storage()
+        payload = [record.model_dump(mode="json") for record in records]
+        _atomic_write_json(METADATA_PATH, payload)
+
+
+def _atomic_write_json(path: Path, payload: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary_file:
+            json.dump(payload, temporary_file, ensure_ascii=False, indent=2)
+            temporary_file.flush()
+            os.fsync(temporary_file.fileno())
+            temporary_path = Path(temporary_file.name)
+        os.replace(temporary_path, path)
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
 
 
 def _clean_text(text: str) -> str:
@@ -117,40 +146,60 @@ async def save_uploaded_document(file: UploadFile) -> DocumentRecord:
         error_message=error_message,
     )
 
-    records = _load_records()
-    records.insert(0, record)
-    _save_records(records)
+    with _METADATA_LOCK:
+        records = _load_records()
+        records.insert(0, record)
+        _save_records(records)
 
-    if record.status == "processed":
-        from app.services.rag_service import index_document
+        if record.status == "processed":
+            from app.services.rag_service import index_document
 
-        try:
-            indexed_chunks = index_document(record)
-            record = record.model_copy(
-                update={
-                    "index_status": "indexed" if indexed_chunks else "failed",
-                    "indexed_chunks": indexed_chunks,
-                    "index_error_message": None if indexed_chunks else "文档未生成可索引片段",
-                }
-            )
-        except Exception as exc:
-            record = record.model_copy(
-                update={
-                    "index_status": "failed",
-                    "index_error_message": f"文档解析成功，但索引失败：{exc}",
-                }
-            )
-            records[0] = record
-            _save_records(records)
-        else:
-            records[0] = record
-            _save_records(records)
+            try:
+                indexed_chunks = index_document(record)
+                record = update_document_index_status(
+                    record.id,
+                    index_status="indexed" if indexed_chunks else "failed",
+                    indexed_chunks=indexed_chunks,
+                    index_error_message=None if indexed_chunks else "文档未生成可索引片段",
+                )
+            except Exception as exc:
+                record = update_document_index_status(
+                    record.id,
+                    index_status="failed",
+                    indexed_chunks=0,
+                    index_error_message=f"文档解析成功，但索引失败：{exc}",
+                )
 
     return record
 
 
 def list_documents() -> list[DocumentRecord]:
     return _load_records()
+
+
+def update_document_index_status(
+    document_id: str,
+    *,
+    index_status: DocumentIndexStatus,
+    indexed_chunks: int = 0,
+    index_error_message: str | None = None,
+) -> DocumentRecord:
+    with _METADATA_LOCK:
+        records = _load_records()
+        for index, record in enumerate(records):
+            if record.id != document_id:
+                continue
+            updated_record = record.model_copy(
+                update={
+                    "index_status": index_status,
+                    "indexed_chunks": indexed_chunks,
+                    "index_error_message": index_error_message,
+                }
+            )
+            records[index] = updated_record
+            _save_records(records)
+            return updated_record
+        raise DocumentServiceError("文档不存在")
 
 
 def get_document(document_id: str) -> DocumentRecord:
@@ -168,20 +217,21 @@ def get_document_preview(document_id: str, limit: int = 1200) -> tuple[DocumentR
 
 
 def delete_document(document_id: str) -> None:
-    records = _load_records()
-    next_records = [record for record in records if record.id != document_id]
-    if len(next_records) == len(records):
-        raise DocumentServiceError("文档不存在")
+    with _METADATA_LOCK:
+        records = _load_records()
+        next_records = [record for record in records if record.id != document_id]
+        if len(next_records) == len(records):
+            raise DocumentServiceError("文档不存在")
 
-    from app.services.rag_service import delete_document_index
+        from app.services.rag_service import delete_document_index
 
-    delete_document_index(document_id)
-    for path in UPLOAD_DIR.glob(f"{document_id}.*"):
-        if path.is_file():
-            path.unlink(missing_ok=True)
-    text_path = TEXT_DIR / f"{document_id}.txt"
-    text_path.unlink(missing_ok=True)
-    _save_records(next_records)
+        delete_document_index(document_id)
+        for path in UPLOAD_DIR.glob(f"{document_id}.*"):
+            if path.is_file():
+                path.unlink(missing_ok=True)
+        text_path = TEXT_DIR / f"{document_id}.txt"
+        text_path.unlink(missing_ok=True)
+        _save_records(next_records)
 
 
 def reset_documents_for_tests() -> None:

@@ -114,7 +114,7 @@ def _build_rag_user_prompt(question: str, sources: list[RagSource]) -> str:
         page_text = f"，页码 {source.page_number}" if source.page_number else ""
         context_blocks.append(
             f"[片段 {index}] 文档：{source.filename}{page_text}，chunk_index：{source.chunk_index}\n"
-            f"{source.preview}"
+            f"{source.content or source.preview}"
         )
 
     return (
