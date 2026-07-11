@@ -64,24 +64,24 @@
 
 功能区块：
 
-- 上传 PDF / TXT / Markdown
+- 上传 PDF / 扫描 PDF / 文字图片 / TXT / Markdown / CSV / Word / Excel
 - 文档列表
 - 文档状态：`processed`、`failed`
 - 文档详情 / 解析预览
 - 删除文档
 - 文本解析
-- 简单文本清洗
+- 格式感知文本清洗、PDF 重复页眉页脚清理、表格结构保留
 
 说明：
 
-- 基础版采用同步处理，上传完成后直接返回 `processed` 或 `failed`。
+- 基础版采用请求内处理并把 CPU 密集解析、OCR 和索引放入工作线程，上传完成后直接返回 `processed` 或 `failed`。
 - `pending`、`processing`、`indexed` 更适合异步任务队列和向量索引阶段，放到阶段 3 或 V1 增强。
 - 阶段 2 不做文本切片、Embedding、Chroma 入库和检索。
 
 验收标准：
 
 ```text
-上传一个售后政策 PDF / TXT / Markdown
+上传一个售后政策 PDF / 图片 / TXT / Word / Excel
 ↓
 系统能解析出文本
 ↓
@@ -92,7 +92,7 @@
 可以删除文档
 ```
 
-当前状态：已完成最小闭环，需持续用真实企业样本文档补充测试。
+当前状态：已完成增强闭环。公开网络样本的 PDF、JPG、TXT、DOCX、XLSX、XLS 均通过解析、清洗、切片、Embedding、Chroma 入库、检索和删除测试。
 
 ---
 

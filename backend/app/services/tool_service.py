@@ -28,6 +28,7 @@ class ToolServiceError(Exception):
 class ToolExecution:
     tool_name: str
     answer: str
+    arguments: dict
     result: dict
 
 
@@ -45,7 +46,7 @@ def create_ticket(description: str) -> TicketResponse:
     return ticket
 
 
-def handle_tool_request(message: str) -> ToolExecution | None:
+def _handle_tool_request_legacy(message: str) -> ToolExecution | None:
     order_match = re.search(r"(?:订单(?:号)?\s*)?(\d{5,})", message)
     if order_match and any(keyword in message for keyword in ("订单", "物流", "发货", "到哪", "送达")):
         order_id = order_match.group(1)
@@ -59,16 +60,46 @@ def handle_tool_request(message: str) -> ToolExecution | None:
             if order.estimated_delivery:
                 details.append(f"预计{order.estimated_delivery}送达")
             answer = "，".join(details) + "。"
-            return ToolExecution("get_order_status", answer, order.model_dump(mode="json"))
+            return ToolExecution("get_order_status", answer, {"order_id": order_id}, order.model_dump(mode="json"))
         except ToolServiceError:
             result = {"order_id": order_id, "status": "not_found"}
             _try_append_tool_log("get_order_status", {"order_id": order_id}, result)
-            return ToolExecution("get_order_status", f"没有查询到订单 {order_id}，请核对订单号后重试。", result)
+            return ToolExecution("get_order_status", f"没有查询到订单 {order_id}，请核对订单号后重试。", {"order_id": order_id}, result)
 
     if any(keyword in message for keyword in ("创建工单", "提交工单", "转工单")):
         ticket = create_ticket(message.strip())
         answer = f"已为你创建工单 {ticket.ticket_id}，当前状态为待处理。工作人员会根据问题描述继续跟进。"
-        return ToolExecution("create_ticket", answer, ticket.model_dump(mode="json"))
+        return ToolExecution("create_ticket", answer, {"description": message.strip()}, ticket.model_dump(mode="json"))
+    return None
+
+
+def handle_tool_request(message: str) -> ToolExecution | None:
+    """Recognize the supported Chinese tool intents using encoding-safe literals."""
+    order_match = re.search(r"(?:\u8ba2\u5355(?:\u53f7)?\s*)?(\d{5,})", message)
+    order_keywords = ("\u8ba2\u5355", "\u7269\u6d41", "\u53d1\u8d27", "\u5230\u54ea", "\u9001\u8fbe")
+    if order_match and any(keyword in message for keyword in order_keywords):
+        order_id = order_match.group(1)
+        try:
+            order = get_order_status(order_id)
+            details = [f"\u8ba2\u5355 {order.order_id} \u5f53\u524d\u72b6\u6001\u4e3a\u201c{order.status}\u201d"]
+            if order.carrier:
+                details.append(f"\u627f\u8fd0\u65b9\uff1a{order.carrier}")
+            if order.tracking_number:
+                details.append(f"\u8fd0\u5355\u53f7\uff1a{order.tracking_number}")
+            if order.estimated_delivery:
+                details.append(f"\u9884\u8ba1{order.estimated_delivery}\u9001\u8fbe")
+            return ToolExecution("get_order_status", "\uff1b".join(details) + "\u3002", {"order_id": order_id}, order.model_dump(mode="json"))
+        except ToolServiceError:
+            result = {"order_id": order_id, "status": "not_found"}
+            _try_append_tool_log("get_order_status", {"order_id": order_id}, result)
+            answer = f"\u6ca1\u6709\u67e5\u8be2\u5230\u8ba2\u5355 {order_id}\uff0c\u8bf7\u6838\u5bf9\u8ba2\u5355\u53f7\u540e\u91cd\u8bd5\u3002"
+            return ToolExecution("get_order_status", answer, {"order_id": order_id}, result)
+
+    ticket_keywords = ("\u521b\u5efa\u5de5\u5355", "\u63d0\u4ea4\u5de5\u5355", "\u8f6c\u5de5\u5355")
+    if any(keyword in message for keyword in ticket_keywords):
+        ticket = create_ticket(message.strip())
+        answer = f"\u5df2\u4e3a\u4f60\u521b\u5efa\u5de5\u5355 {ticket.ticket_id}\uff0c\u5f53\u524d\u72b6\u6001\u4e3a\u5f85\u5904\u7406\u3002"
+        return ToolExecution("create_ticket", answer, {"description": message.strip()}, ticket.model_dump(mode="json"))
     return None
 
 

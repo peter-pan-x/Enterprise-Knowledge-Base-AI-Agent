@@ -17,6 +17,8 @@ class RagSource(BaseModel):
 class RagSearchRequest(BaseModel):
     query: str = Field(min_length=1, max_length=4000)
     top_k: int | None = Field(default=None, ge=1, le=20)
+    knowledge_base_id: str | None = Field(default=None, max_length=64)
+    category: str | None = Field(default=None, max_length=80)
 
     @field_validator("query")
     @classmethod
@@ -43,6 +45,9 @@ class RagLogEntry(BaseModel):
     source_count: int
     sources: list[RagSource]
     created_at: str
+    retrieval_latency_ms: int = 0
+    knowledge_base_id: str | None = None
+    category: str | None = None
 
 
 class RagLogListResponse(BaseModel):

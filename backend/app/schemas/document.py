@@ -20,6 +20,9 @@ class DocumentRecord(BaseModel):
     index_status: DocumentIndexStatus = "not_indexed"
     indexed_chunks: int = 0
     index_error_message: str | None = None
+    is_enabled: bool = True
+    knowledge_base_id: str = "default"
+    category: str = "general"
 
 
 class DocumentListResponse(BaseModel):

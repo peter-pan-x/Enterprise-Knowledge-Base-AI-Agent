@@ -1,11 +1,32 @@
 import hashlib
 import math
 import re
+import json
+from urllib.request import Request, urlopen
 
 from app.core.config import settings
 
 
 def embed_text(text: str) -> list[float]:
+    if settings.embedding_provider == "openai_compatible":
+        return _embed_openai_compatible(text)
+    return _embed_local_hash(text)
+
+
+def _embed_openai_compatible(text: str) -> list[float]:
+    if not settings.embedding_base_url or not settings.embedding_api_key:
+        raise RuntimeError("EMBEDDING_PROVIDER=openai_compatible requires EMBEDDING_BASE_URL and EMBEDDING_API_KEY")
+    payload = json.dumps({"model": settings.embedding_model, "input": text}).encode("utf-8")
+    request = Request(
+        f"{settings.embedding_base_url.rstrip('/')}/v1/embeddings", data=payload,
+        headers={"Authorization": f"Bearer {settings.embedding_api_key}", "Content-Type": "application/json"}, method="POST",
+    )
+    with urlopen(request, timeout=20) as response:  # nosec B310: endpoint is explicitly administrator configured
+        data = json.loads(response.read().decode("utf-8"))
+    return [float(value) for value in data["data"][0]["embedding"]]
+
+
+def _embed_local_hash(text: str) -> list[float]:
     vector = [0.0] * settings.embedding_dimension
     tokens = _tokenize(text)
     if not tokens:

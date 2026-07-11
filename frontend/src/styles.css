@@ -16,6 +16,81 @@ body {
   min-height: 100vh;
 }
 
+.loginShell {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 24px;
+  background: #eef2f6;
+}
+
+.loginCard {
+  display: flex;
+  width: min(100%, 380px);
+  flex-direction: column;
+  gap: 14px;
+  padding: 32px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 16px 42px rgba(15, 23, 42, 0.12);
+}
+
+.loginCard .brandMark {
+  margin-bottom: 4px;
+}
+
+.loginCard h1,
+.loginCard p {
+  margin: 0;
+}
+
+.loginCard p,
+.loginCard small {
+  color: #64748b;
+  line-height: 1.5;
+}
+
+.loginCard label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: #334155;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.loginCard input {
+  padding: 10px 11px;
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+}
+
+.loginCard button {
+  min-height: 42px;
+  border-radius: 8px;
+  background: #0f766e;
+  color: #fff;
+  cursor: pointer;
+}
+
+.sessionUser {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: #cbd5e1;
+  font-size: 12px;
+}
+
+.sessionUser button {
+  padding: 4px 7px;
+  border-radius: 5px;
+  background: #314151;
+  color: #fff;
+  cursor: pointer;
+}
+
 button,
 textarea,
 input {
@@ -729,6 +804,11 @@ button {
   padding: 0;
   background: #fee2e2;
   color: #991b1b;
+}
+
+.documentActions button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .previewBox {

@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
 from app.schemas.admin import (
     DashboardMetrics,
@@ -13,12 +13,14 @@ from app.schemas.admin import (
 from app.services.customer_service import CustomerServiceError, get_admin_snapshot, update_knowledge_gap_status
 from fastapi import HTTPException, status
 from app.services.document_service import list_documents
+from app.services.auth_service import CurrentUser, require_admin
+from app.services.audit_service import list_audit_events, list_generation_traces
 
 router = APIRouter()
 
 
 @router.get("/dashboard", response_model=DashboardMetrics)
-async def dashboard() -> DashboardMetrics:
+async def dashboard(_: CurrentUser = Depends(require_admin)) -> DashboardMetrics:
     snapshot = get_admin_snapshot()
     today = datetime.now(UTC).date()
     today_conversations = sum(
@@ -36,17 +38,17 @@ async def dashboard() -> DashboardMetrics:
 
 
 @router.get("/feedback", response_model=FeedbackListResponse)
-async def feedback() -> FeedbackListResponse:
+async def feedback(_: CurrentUser = Depends(require_admin)) -> FeedbackListResponse:
     return FeedbackListResponse(feedback=get_admin_snapshot()["feedback"])
 
 
 @router.get("/knowledge-gaps", response_model=KnowledgeGapListResponse)
-async def knowledge_gaps() -> KnowledgeGapListResponse:
+async def knowledge_gaps(_: CurrentUser = Depends(require_admin)) -> KnowledgeGapListResponse:
     return KnowledgeGapListResponse(knowledge_gaps=get_admin_snapshot()["knowledge_gaps"])
 
 
 @router.patch("/knowledge-gaps/{gap_id}", response_model=KnowledgeGapEntry)
-async def update_knowledge_gap(gap_id: str, request: KnowledgeGapStatusRequest) -> KnowledgeGapEntry:
+async def update_knowledge_gap(gap_id: str, request: KnowledgeGapStatusRequest, _: CurrentUser = Depends(require_admin)) -> KnowledgeGapEntry:
     try:
         return KnowledgeGapEntry.model_validate(update_knowledge_gap_status(gap_id, request.status))
     except CustomerServiceError as exc:
@@ -54,5 +56,15 @@ async def update_knowledge_gap(gap_id: str, request: KnowledgeGapStatusRequest) 
 
 
 @router.get("/handoffs", response_model=HandoffListResponse)
-async def handoffs() -> HandoffListResponse:
+async def handoffs(_: CurrentUser = Depends(require_admin)) -> HandoffListResponse:
     return HandoffListResponse(handoffs=get_admin_snapshot()["handoffs"])
+
+
+@router.get("/audit-events")
+async def audit_events(_: CurrentUser = Depends(require_admin)) -> dict:
+    return {"events": list_audit_events()}
+
+
+@router.get("/generation-traces")
+async def generation_traces(_: CurrentUser = Depends(require_admin)) -> dict:
+    return {"traces": list_generation_traces()}

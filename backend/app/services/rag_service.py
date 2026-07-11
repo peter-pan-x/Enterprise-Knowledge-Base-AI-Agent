@@ -3,6 +3,7 @@ import os
 import re
 import tempfile
 import threading
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -14,7 +15,7 @@ from chromadb.config import Settings as ChromaSettings
 from app.core.config import settings
 from app.schemas.document import DocumentRecord
 from app.schemas.rag import RagLogEntry, RagSource
-from app.services.document_service import TEXT_DIR, list_documents, update_document_index_status
+from app.services.document_service import TEXT_DIR, list_documents, list_knowledge_bases, update_document_index_status
 from app.services.embedding_service import embed_text
 
 CHROMA_DIR = Path(__file__).resolve().parents[2] / "data" / "chroma"
@@ -105,17 +106,19 @@ def reindex_all_documents() -> tuple[int, int]:
     return indexed_documents, indexed_chunks
 
 
-def search_knowledge_base(query: str, top_k: int | None = None) -> list[RagSource]:
+def search_knowledge_base(query: str, top_k: int | None = None, knowledge_base_id: str | None = None, category: str | None = None) -> list[RagSource]:
+    started_at = time.perf_counter()
     collection = get_collection()
     count = collection.count()
     effective_top_k = max(1, min(top_k if top_k is not None else settings.rag_top_k, 20))
     if count == 0:
-        _try_append_rag_log(query, effective_top_k, [])
+        _try_append_rag_log(query, effective_top_k, [], started_at, knowledge_base_id, category)
         return []
 
+    candidate_count = min(max(effective_top_k * 10, 50), count)
     result = collection.query(
         query_embeddings=[embed_text(query)],
-        n_results=min(effective_top_k, count),
+        n_results=candidate_count,
         include=["documents", "metadatas", "distances"],
     )
 
@@ -124,25 +127,69 @@ def search_knowledge_base(query: str, top_k: int | None = None) -> list[RagSourc
     distances = result.get("distances", [[]])[0]
     ids = result.get("ids", [[]])[0]
 
-    sources: list[RagSource] = []
+    sources_by_id: dict[str, RagSource] = {}
+    # The configured threshold is authoritative; a hard-coded floor made tuning ineffective.
+    vector_floor = settings.rag_min_score
+    enabled_knowledge_base_ids = {item.id for item in list_knowledge_bases() if item.is_enabled}
+    enabled_document_ids = {
+        record.id for record in list_documents()
+        if record.is_enabled and record.status == "processed" and record.knowledge_base_id in enabled_knowledge_base_ids
+        and (knowledge_base_id is None or record.knowledge_base_id == knowledge_base_id)
+        and (category is None or record.category == category)
+    }
     for chunk_id, document, metadata, distance in zip(ids, documents, metadatas, distances):
-        score = max(0.0, 1.0 - float(distance))
+        if str(metadata.get("document_id", "")) not in enabled_document_ids:
+            continue
+        vector_score = max(0.0, 1.0 - float(distance))
+        lexical_score = _lexical_score(query, document)
+        score = max(vector_score, lexical_score * 0.9 if lexical_score >= 0.5 else 0.0)
+        if lexical_score < 0.5 and vector_score < vector_floor:
+            continue
         if score < settings.rag_min_score:
             continue
-        sources.append(
-            RagSource(
-                document_id=str(metadata.get("document_id", "")),
-                filename=str(metadata.get("filename", "")),
-                chunk_id=str(chunk_id),
-                chunk_index=int(metadata.get("chunk_index", 0)),
-                page_number=_optional_int(metadata.get("page_number")),
-                score=round(score, 4),
-                preview=_preview(document),
-                content=document,
-            )
+        source = _build_source(chunk_id, document, metadata, score)
+        sources_by_id[source.chunk_id] = source
+
+    for term in _lexical_query_terms(query):
+        lexical_matches = collection.get(
+            where_document={"$contains": term},
+            include=["documents", "metadatas"],
+            limit=200,
         )
-    _try_append_rag_log(query, effective_top_k, sources)
+        for chunk_id, document, metadata in zip(
+            lexical_matches.get("ids", []),
+            lexical_matches.get("documents", []),
+            lexical_matches.get("metadatas", []),
+        ):
+            if str(metadata.get("document_id", "")) not in enabled_document_ids:
+                continue
+            if str(chunk_id) in sources_by_id:
+                continue
+            lexical_score = _lexical_score(query, document)
+            score = lexical_score * 0.9
+            if lexical_score < 0.5 or score < settings.rag_min_score:
+                continue
+            source = _build_source(chunk_id, document, metadata, score)
+            sources_by_id[source.chunk_id] = source
+
+    sources = list(sources_by_id.values())
+    sources.sort(key=lambda source: source.score, reverse=True)
+    sources = sources[:effective_top_k]
+    _try_append_rag_log(query, effective_top_k, sources, started_at, knowledge_base_id, category)
     return sources
+
+
+def _build_source(chunk_id: object, document: str, metadata: dict, score: float) -> RagSource:
+    return RagSource(
+        document_id=str(metadata.get("document_id", "")),
+        filename=str(metadata.get("filename", "")),
+        chunk_id=str(chunk_id),
+        chunk_index=int(metadata.get("chunk_index", 0)),
+        page_number=_optional_int(metadata.get("page_number")),
+        score=round(score, 4),
+        preview=_preview(document),
+        content=document,
+    )
 
 
 def list_rag_logs(limit: int = 50) -> list[RagLogEntry]:
@@ -156,7 +203,7 @@ def list_rag_logs(limit: int = 50) -> list[RagLogEntry]:
             return []
 
 
-def append_rag_log(query: str, top_k: int, sources: list[RagSource]) -> None:
+def append_rag_log(query: str, top_k: int, sources: list[RagSource], retrieval_latency_ms: int = 0, knowledge_base_id: str | None = None, category: str | None = None) -> None:
     with _RAG_LOG_LOCK:
         RAG_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
         logs = []
@@ -169,14 +216,17 @@ def append_rag_log(query: str, top_k: int, sources: list[RagSource]) -> None:
             source_count=len(sources),
             sources=sources,
             created_at=datetime.now(UTC).isoformat(),
+            retrieval_latency_ms=retrieval_latency_ms,
+            knowledge_base_id=knowledge_base_id,
+            category=category,
         )
         logs.insert(0, entry.model_dump(mode="json"))
         _atomic_write_rag_logs(logs[:200])
 
 
-def _try_append_rag_log(query: str, top_k: int, sources: list[RagSource]) -> None:
+def _try_append_rag_log(query: str, top_k: int, sources: list[RagSource], started_at: float, knowledge_base_id: str | None, category: str | None) -> None:
     try:
-        append_rag_log(query, top_k, sources)
+        append_rag_log(query, top_k, sources, int((time.perf_counter() - started_at) * 1000), knowledge_base_id, category)
     except (OSError, json.JSONDecodeError, ValueError):
         # Retrieval and chat must remain available if optional logging fails.
         return
@@ -237,6 +287,8 @@ def split_document_text(record: DocumentRecord, text: str) -> list[Chunk]:
                         "chunk_index": chunk_index,
                         "page_number": _detect_page_number(chunk_text),
                         "created_at": record.created_at.isoformat(),
+                        "knowledge_base_id": record.knowledge_base_id,
+                        "category": record.category,
                     },
                 )
             )
@@ -265,3 +317,23 @@ def _preview(text: str, limit: int = 260) -> str:
     if len(compact) <= limit:
         return compact
     return f"{compact[:limit]}..."
+
+
+def _lexical_score(query: str, document: str) -> float:
+    query_tokens = _meaningful_tokens(query)
+    if not query_tokens:
+        return 0.0
+    document_tokens = _meaningful_tokens(document)
+    return len(query_tokens & document_tokens) / len(query_tokens)
+
+
+def _meaningful_tokens(text: str) -> set[str]:
+    lowered = text.lower()
+    tokens = set(re.findall(r"[a-z0-9_]{2,}", lowered))
+    for sequence in re.findall(r"[\u4e00-\u9fff]+", lowered):
+        tokens.update(sequence[index : index + 2] for index in range(len(sequence) - 1))
+    return tokens
+
+
+def _lexical_query_terms(query: str) -> list[str]:
+    return sorted(_meaningful_tokens(query), key=lambda token: (-len(token), token))[:3]

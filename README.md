@@ -25,7 +25,8 @@ RAG 是本项目核心能力，但基础版只做通用标准流程，不追求�
 
 v0.6 完整 Demo：
 
-- 文档上传、解析、切片、Embedding 和 Chroma 索引
+- PDF、扫描 PDF、文字图片、TXT、Markdown、CSV、Word、Excel 文档解析
+- 格式感知清洗、页眉页脚去重、切片、Embedding 和 Chroma 索引
 - 基于知识库的流式问答、来源引用和无依据拒答
 - 历史会话、回答反馈、知识缺口和转人工请求
 - Dashboard、对话详情、反馈、知识缺口和运行日志后台
@@ -53,6 +54,8 @@ LLM_API_KEY=你的 API Key
 LLM_MODEL=deepseek-chat
 ```
 
+本地演示会初始化 `admin/admin123` 与 `user/user123` 两个账号；生产部署前必须在 `backend/.env` 设置随机 `AUTH_SECRET`，并替换初始账号密码。
+
 ### 2. 前端
 
 ```bash
@@ -66,6 +69,8 @@ npm run dev
 ```text
 http://localhost:5173
 ```
+
+支持的知识库文件：`.pdf`、`.png`、`.jpg`、`.jpeg`、`.webp`、`.bmp`、`.tif`、`.tiff`、`.txt`、`.md`、`.markdown`、`.csv`、`.docx`、`.xlsx`、`.xls`。
 
 ## 六阶段开发路线
 

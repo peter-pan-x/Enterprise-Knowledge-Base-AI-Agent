@@ -18,6 +18,12 @@ import {
 } from "lucide-react";
 
 type Role = "user" | "assistant";
+type AppRole = "user" | "admin";
+
+type AuthSession = {
+  accessToken: string;
+  user: { id: string; username: string; role: AppRole };
+};
 
 type RagSource = {
   document_id: string;
@@ -62,7 +68,12 @@ type KnowledgeDocument = {
   index_status: DocumentIndexStatus;
   indexed_chunks: number;
   index_error_message?: string | null;
+  is_enabled: boolean;
+  knowledge_base_id: string;
+  category: string;
 };
+
+type KnowledgeBase = { id: string; name: string; product_name: string; is_enabled: boolean };
 
 type DashboardMetrics = {
   document_count: number;
@@ -73,6 +84,18 @@ type DashboardMetrics = {
 };
 
 type AdminEntry = Record<string, string | number | null>;
+
+const AUTH_STORAGE_KEY = "knowledge-agent-auth";
+
+async function apiFetch(input: RequestInfo | URL, init: RequestInit = {}) {
+  const stored = localStorage.getItem(AUTH_STORAGE_KEY);
+  const headers = new Headers(init.headers);
+  if (stored) {
+    const session = JSON.parse(stored) as AuthSession;
+    headers.set("Authorization", `Bearer ${session.accessToken}`);
+  }
+  return fetch(input, { ...init, headers });
+}
 
 const starterMessages: Message[] = [
   {
@@ -87,6 +110,50 @@ function formatFileSize(size: number) {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
   return `${(size / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function LoginPage({ onLogin }: { onLogin: (session: AuthSession) => void }) {
+  const [username, setUsername] = useState("admin");
+  const [password, setPassword] = useState("admin123");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setLoading(true);
+    setError("");
+    try {
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password })
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data?.detail ?? "登录失败");
+      const session: AuthSession = { accessToken: data.access_token, user: data.user };
+      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(session));
+      onLogin(session);
+    } catch (loginError) {
+      setError(loginError instanceof Error ? loginError.message : "登录失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <main className="loginShell">
+      <form className="loginCard" onSubmit={submit}>
+        <div className="brandMark">EA</div>
+        <h1>Knowledge Agent</h1>
+        <p>登录后访问企业知识库客服工作台。</p>
+        <label>用户名<input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" /></label>
+        <label>密码<input value={password} onChange={(event) => setPassword(event.target.value)} type="password" autoComplete="current-password" /></label>
+        {error && <div className="errorBox">{error}</div>}
+        <button type="submit" disabled={loading}>{loading ? "登录中" : "登录"}</button>
+        <small>本地 Demo 默认账号：admin / admin123，user / user123</small>
+      </form>
+    </main>
+  );
 }
 
 function AdminPanel() {
@@ -104,13 +171,13 @@ function AdminPanel() {
     setError("");
     try {
       const responses = await Promise.all([
-        fetch("/api/admin/dashboard"),
-        fetch("/api/admin/feedback"),
-        fetch("/api/admin/knowledge-gaps"),
-        fetch("/api/admin/handoffs"),
-        fetch("/api/rag/logs"),
-        fetch("/api/customer-service/conversations"),
-        fetch("/api/tools/logs")
+        apiFetch("/api/admin/dashboard"),
+        apiFetch("/api/admin/feedback"),
+        apiFetch("/api/admin/knowledge-gaps"),
+        apiFetch("/api/admin/handoffs"),
+        apiFetch("/api/rag/logs"),
+        apiFetch("/api/customer-service/conversations"),
+        apiFetch("/api/tools/logs")
       ]);
       if (responses.some((response) => !response.ok)) throw new Error("管理后台数据加载失败");
       const [metricsData, feedbackData, gapData, handoffData, ragData, conversationData, toolData] = await Promise.all(
@@ -134,7 +201,7 @@ function AdminPanel() {
 
   async function inspectConversation(conversation: ConversationSummary) {
     try {
-      const response = await fetch(`/api/customer-service/conversations/${conversation.id}`);
+      const response = await apiFetch(`/api/customer-service/conversations/${conversation.id}`);
       if (!response.ok) throw new Error("对话详情加载失败");
       const data = await response.json();
       setSelectedConversation({ title: conversation.title, messages: data.messages });
@@ -145,7 +212,7 @@ function AdminPanel() {
 
   async function updateGapStatus(entry: AdminEntry) {
     const nextStatus = entry.status === "resolved" ? "open" : "resolved";
-    const response = await fetch(`/api/admin/knowledge-gaps/${entry.id}`, {
+    const response = await apiFetch(`/api/admin/knowledge-gaps/${entry.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status: nextStatus })
@@ -248,6 +315,11 @@ function AdminList({ title, entries, primary, secondary, empty }: { title: strin
 }
 
 function App() {
+  const [session, setSession] = useState<AuthSession | null>(() => {
+    const stored = localStorage.getItem(AUTH_STORAGE_KEY);
+    return stored ? JSON.parse(stored) as AuthSession : null;
+  });
+  const [authChecked, setAuthChecked] = useState(false);
   const [view, setView] = useState<"chat" | "admin">("chat");
   const [messages, setMessages] = useState<Message[]>(starterMessages);
   const [conversationId, setConversationId] = useState<string | null>(null);
@@ -255,9 +327,13 @@ function App() {
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
+  const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
+  const [activeKnowledgeBase, setActiveKnowledgeBase] = useState("default");
+  const [documentCategory, setDocumentCategory] = useState("general");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [isReindexing, setIsReindexing] = useState(false);
+  const [reprocessingId, setReprocessingId] = useState<string | null>(null);
   const [documentError, setDocumentError] = useState("");
   const [preview, setPreview] = useState("");
   const [previewTitle, setPreviewTitle] = useState("");
@@ -274,7 +350,7 @@ function App() {
   async function loadDocuments() {
     setDocumentError("");
     try {
-      const response = await fetch("/api/documents");
+      const response = await apiFetch("/api/documents");
       if (!response.ok) throw new Error("文档列表加载失败");
       const data = (await response.json()) as { documents: KnowledgeDocument[] };
       setDocuments(data.documents);
@@ -283,9 +359,20 @@ function App() {
     }
   }
 
+  async function loadKnowledgeBases() {
+    try {
+      const response = await apiFetch("/api/knowledge-bases");
+      if (!response.ok) throw new Error("知识库列表加载失败");
+      const data = await response.json() as { knowledge_bases: KnowledgeBase[] };
+      setKnowledgeBases(data.knowledge_bases);
+    } catch (error) {
+      setDocumentError(error instanceof Error ? error.message : "知识库列表加载失败");
+    }
+  }
+
   async function loadConversations() {
     try {
-      const response = await fetch("/api/customer-service/conversations");
+      const response = await apiFetch("/api/customer-service/conversations");
       if (!response.ok) throw new Error("历史会话加载失败");
       const data = (await response.json()) as { conversations: ConversationSummary[] };
       setConversations(data.conversations);
@@ -295,9 +382,19 @@ function App() {
   }
 
   useEffect(() => {
-    void loadDocuments();
+    if (!session) {
+      setAuthChecked(true);
+      return;
+    }
+    void apiFetch("/api/auth/me").then((response) => {
+      if (!response.ok) {
+        localStorage.removeItem(AUTH_STORAGE_KEY);
+        setSession(null);
+      }
+    }).finally(() => setAuthChecked(true));
+    if (session.user.role === "admin") { void loadDocuments(); void loadKnowledgeBases(); }
     void loadConversations();
-  }, []);
+  }, [session]);
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -320,10 +417,10 @@ function App() {
     setIsStreaming(true);
 
     try {
-      const response = await fetch("/api/chat/stream", {
+      const response = await apiFetch("/api/chat/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: question, history, conversation_id: conversationId })
+        body: JSON.stringify({ message: question, history, conversation_id: conversationId, knowledge_base_id: activeKnowledgeBase })
       });
 
       if (!response.ok || !response.body) {
@@ -398,9 +495,11 @@ function App() {
 
     const formData = new FormData();
     formData.append("file", selectedFile);
+    formData.append("knowledge_base_id", activeKnowledgeBase);
+    formData.append("category", documentCategory);
 
     try {
-      const response = await fetch("/api/documents", {
+      const response = await apiFetch("/api/documents", {
         method: "POST",
         body: formData
       });
@@ -423,7 +522,7 @@ function App() {
   async function handlePreview(document: KnowledgeDocument) {
     setDocumentError("");
     try {
-      const response = await fetch(`/api/documents/${document.id}/preview`);
+      const response = await apiFetch(`/api/documents/${document.id}/preview`);
       if (!response.ok) throw new Error("解析预览加载失败");
       const data = (await response.json()) as { preview: string };
       setPreviewTitle(document.filename);
@@ -436,7 +535,7 @@ function App() {
   async function handleDelete(document: KnowledgeDocument) {
     setDocumentError("");
     try {
-      const response = await fetch(`/api/documents/${document.id}`, { method: "DELETE" });
+      const response = await apiFetch(`/api/documents/${document.id}`, { method: "DELETE" });
       if (!response.ok) throw new Error("文档删除失败");
       if (previewTitle === document.filename) {
         setPreview("");
@@ -448,11 +547,45 @@ function App() {
     }
   }
 
+  async function handleReprocess(document: KnowledgeDocument) {
+    if (reprocessingId) return;
+    setReprocessingId(document.id);
+    setDocumentError("");
+    try {
+      const response = await apiFetch(`/api/documents/${document.id}/reprocess`, { method: "POST" });
+      if (!response.ok) {
+        const data = await response.json().catch(() => null);
+        throw new Error(data?.detail ?? "文档重新解析失败");
+      }
+      await loadDocuments();
+    } catch (error) {
+      setDocumentError(error instanceof Error ? error.message : "文档重新解析失败");
+    } finally {
+      setReprocessingId(null);
+    }
+  }
+
+  async function toggleDocument(document: KnowledgeDocument) {
+    setDocumentError("");
+    try {
+      const response = await apiFetch(`/api/documents/${document.id}/enabled`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ is_enabled: !document.is_enabled })
+      });
+      if (!response.ok) throw new Error("文档状态更新失败");
+      const updated = await response.json();
+      setDocuments((current) => current.map((item) => item.id === updated.id ? updated : item));
+    } catch (error) {
+      setDocumentError(error instanceof Error ? error.message : "文档状态更新失败");
+    }
+  }
+
   async function handleReindex() {
     setIsReindexing(true);
     setDocumentError("");
     try {
-      const response = await fetch("/api/rag/reindex", { method: "POST" });
+      const response = await apiFetch("/api/rag/reindex", { method: "POST" });
       if (!response.ok) throw new Error("重新索引失败");
       await loadDocuments();
     } catch (error) {
@@ -473,7 +606,7 @@ function App() {
   async function openConversation(id: string) {
     if (isStreaming) return;
     try {
-      const response = await fetch(`/api/customer-service/conversations/${id}`);
+      const response = await apiFetch(`/api/customer-service/conversations/${id}`);
       if (!response.ok) throw new Error("历史会话加载失败");
       const data = await response.json();
       setConversationId(id);
@@ -491,7 +624,7 @@ function App() {
   async function submitFeedback(message: Message, rating: "helpful" | "unhelpful") {
     if (!conversationId || !message.serverMessageId) return;
     try {
-      const response = await fetch("/api/customer-service/feedback", {
+      const response = await apiFetch("/api/customer-service/feedback", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -512,7 +645,7 @@ function App() {
   async function requestHandoff(message: Message) {
     if (!conversationId || !message.serverMessageId || message.handoffRequested) return;
     try {
-      const response = await fetch("/api/customer-service/handoffs", {
+      const response = await apiFetch("/api/customer-service/handoffs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ conversation_id: conversationId, message_id: message.serverMessageId })
@@ -532,6 +665,23 @@ function App() {
     setSelectedFile(event.target.files?.[0] ?? null);
   }
 
+  function logout() {
+    localStorage.removeItem(AUTH_STORAGE_KEY);
+    setSession(null);
+    setMessages(starterMessages);
+    setConversationId(null);
+    setConversations([]);
+    setView("chat");
+  }
+
+  if (!authChecked) {
+    return <main className="loginShell">正在验证登录状态…</main>;
+  }
+
+  if (!session) {
+    return <LoginPage onLogin={(nextSession) => { setSession(nextSession); setAuthChecked(true); }} />;
+  }
+
   return (
     <main className="shell">
       <aside className="sidebar">
@@ -548,10 +698,17 @@ function App() {
           新建会话
         </button>
 
-        <button className="newChatButton" type="button" onClick={() => setView("admin")}>
-          <LayoutDashboard size={18} />
-          管理后台
-        </button>
+        {session.user.role === "admin" && (
+          <button className="newChatButton" type="button" onClick={() => setView("admin")}>
+            <LayoutDashboard size={18} />
+            管理后台
+          </button>
+        )}
+
+        <div className="sessionUser">
+          <span>{session.user.username} · {session.user.role === "admin" ? "管理员" : "用户"}</span>
+          <button type="button" onClick={logout}>退出</button>
+        </div>
 
         <section className="phasePanel" aria-label="当前阶段">
           <div className="phaseTitle">
@@ -581,7 +738,7 @@ function App() {
         </section>
       </aside>
 
-      {view === "admin" && <AdminPanel />}
+      {view === "admin" && session.user.role === "admin" && <AdminPanel />}
       {view === "chat" && <section className="chatPanel">
         <header className="chatHeader">
           <div>
@@ -621,7 +778,7 @@ function App() {
                         ))}
                       </div>
                     )}
-                    {message.role === "assistant" && message.content && (
+                    {message.role === "assistant" && message.content && message.serverMessageId && (
                       <div className="feedback">
                         <button
                           className={message.feedback === "helpful" ? "selected" : ""}
@@ -639,7 +796,7 @@ function App() {
                         >
                           <ThumbsDown size={15} />
                         </button>
-                        {message.sources?.length === 0 && message.serverMessageId && (
+                        {message.sources?.length === 0 && !message.toolName && (
                           <button className="handoffButton" type="button" onClick={() => void requestHandoff(message)}>
                             <Headphones size={15} />
                             {message.handoffRequested ? "已申请人工" : "转人工"}
@@ -653,6 +810,9 @@ function App() {
             </div>
 
             <form className="composer" onSubmit={handleSubmit}>
+              <select value={activeKnowledgeBase} onChange={(event) => setActiveKnowledgeBase(event.target.value)} aria-label="知识库">
+                {knowledgeBases.filter((item) => item.is_enabled).map((item) => <option key={item.id} value={item.id}>{item.product_name} · {item.name}</option>)}
+              </select>
               <textarea
                 value={input}
                 onChange={(event) => setInput(event.target.value)}
@@ -671,11 +831,11 @@ function App() {
             </form>
           </section>
 
-          <aside className="knowledgePanel" aria-label="知识库管理">
+          {session.user.role === "admin" && <aside className="knowledgePanel" aria-label="知识库管理">
             <div className="panelHeader">
               <div>
                 <h2>知识库</h2>
-                <p>上传 PDF、TXT 或 Markdown。解析成功后会自动切片、向量化并写入 Chroma。</p>
+                <p>上传 PDF、图片、TXT、Markdown、CSV、Word 或 Excel。解析后自动清洗、切片并写入 Chroma。</p>
               </div>
               <div className="panelActions">
                 <button className="iconButton" type="button" onClick={() => void loadDocuments()} title="刷新">
@@ -694,11 +854,15 @@ function App() {
             </div>
 
             <form className="uploadBox" onSubmit={handleUpload}>
+              <select value={activeKnowledgeBase} onChange={(event) => setActiveKnowledgeBase(event.target.value)} aria-label="上传知识库">
+                {knowledgeBases.map((item) => <option key={item.id} value={item.id}>{item.product_name} · {item.name}</option>)}
+              </select>
+              <input value={documentCategory} onChange={(event) => setDocumentCategory(event.target.value)} placeholder="分类：售前/售后/原料/证书" />
               <label>
                 <Upload size={18} />
                 <span>{selectedFile ? selectedFile.name : "选择文档"}</span>
                 <input
-                  accept=".pdf,.txt,.md,.markdown"
+                  accept=".pdf,.txt,.md,.markdown,.csv,.png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff,.docx,.xlsx,.xls"
                   ref={fileInputRef}
                   type="file"
                   onChange={handleFileChange}
@@ -737,6 +901,14 @@ function App() {
                       {document.error_message && <small>{document.error_message}</small>}
                       {document.index_error_message && <small>{document.index_error_message}</small>}
                       <div className="documentActions">
+                        {document.status === "failed" && (
+                          <button disabled={reprocessingId !== null} type="button" onClick={() => void handleReprocess(document)}>
+                            {reprocessingId === document.id ? "OCR 解析中" : "OCR 重试"}
+                          </button>
+                        )}
+                        <button type="button" onClick={() => void toggleDocument(document)}>
+                          {document.is_enabled ? "停用检索" : "启用检索"}
+                        </button>
                         <button type="button" onClick={() => void handlePreview(document)}>
                           查看解析
                         </button>
@@ -756,7 +928,7 @@ function App() {
                 <pre>{preview}</pre>
               </section>
             )}
-          </aside>
+          </aside>}
         </div>
       </section>}
     </main>

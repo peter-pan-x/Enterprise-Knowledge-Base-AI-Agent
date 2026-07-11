@@ -19,6 +19,7 @@ class ConversationSummary(BaseModel):
     created_at: str
     updated_at: str
     message_count: int
+    category: str = "other"
 
 
 class ConversationDetail(ConversationSummary):

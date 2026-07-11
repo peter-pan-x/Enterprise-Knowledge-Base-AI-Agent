@@ -5,3 +5,10 @@ python-dotenv==1.1.1
 python-multipart==0.0.20
 pypdf==5.7.0
 chromadb==0.5.23
+pymupdf==1.28.0
+rapidocr-onnxruntime==1.2.3
+openpyxl==3.1.5
+python-docx==1.2.0
+xlrd==2.0.2
+charset-normalizer==3.4.9
+posthog==3.25.0
