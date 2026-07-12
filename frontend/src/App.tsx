@@ -113,8 +113,8 @@ function formatFileSize(size: number) {
 }
 
 function LoginPage({ onLogin }: { onLogin: (session: AuthSession) => void }) {
-  const [username, setUsername] = useState("admin");
-  const [password, setPassword] = useState("admin123");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -150,7 +150,7 @@ function LoginPage({ onLogin }: { onLogin: (session: AuthSession) => void }) {
         <label>密码<input value={password} onChange={(event) => setPassword(event.target.value)} type="password" autoComplete="current-password" /></label>
         {error && <div className="errorBox">{error}</div>}
         <button type="submit" disabled={loading}>{loading ? "登录中" : "登录"}</button>
-        <small>本地 Demo 默认账号：admin / admin123，user / user123</small>
+        <small>请输入管理员提供的账号和密码。</small>
       </form>
     </main>
   );
@@ -330,6 +330,8 @@ function App() {
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
   const [activeKnowledgeBase, setActiveKnowledgeBase] = useState("default");
   const [documentCategory, setDocumentCategory] = useState("general");
+  const [knowledgeBaseName, setKnowledgeBaseName] = useState("");
+  const [productName, setProductName] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [isReindexing, setIsReindexing] = useState(false);
@@ -420,7 +422,8 @@ function App() {
       const response = await apiFetch("/api/chat/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: question, history, conversation_id: conversationId, knowledge_base_id: activeKnowledgeBase })
+        // End users do not select a knowledge base; search spans all enabled bases.
+        body: JSON.stringify({ message: question, history, conversation_id: conversationId })
       });
 
       if (!response.ok || !response.body) {
@@ -472,6 +475,14 @@ function App() {
               )
             );
           }
+          if (eventData.type === "error") {
+            setMessages((current) =>
+              current.map((message) =>
+                message.id === assistantId ? { ...message, content: eventData.message || "回答生成失败，请稍后重试。" } : message
+              )
+            );
+            void loadConversations();
+          }
         }
       }
     } catch (error) {
@@ -516,6 +527,27 @@ function App() {
       setDocumentError(error instanceof Error ? error.message : "文档上传失败");
     } finally {
       setIsUploading(false);
+    }
+  }
+
+  async function createKnowledgeBase(event: FormEvent) {
+    event.preventDefault();
+    if (!knowledgeBaseName.trim() || !productName.trim()) return;
+    setDocumentError("");
+    try {
+      const response = await apiFetch("/api/knowledge-bases", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: knowledgeBaseName.trim(), product_name: productName.trim() })
+      });
+      if (!response.ok) throw new Error("创建知识库失败");
+      const created = await response.json() as KnowledgeBase;
+      setKnowledgeBases((current) => [created, ...current]);
+      setActiveKnowledgeBase(created.id);
+      setKnowledgeBaseName("");
+      setProductName("");
+    } catch (error) {
+      setDocumentError(error instanceof Error ? error.message : "创建知识库失败");
     }
   }
 
@@ -810,9 +842,6 @@ function App() {
             </div>
 
             <form className="composer" onSubmit={handleSubmit}>
-              <select value={activeKnowledgeBase} onChange={(event) => setActiveKnowledgeBase(event.target.value)} aria-label="知识库">
-                {knowledgeBases.filter((item) => item.is_enabled).map((item) => <option key={item.id} value={item.id}>{item.product_name} · {item.name}</option>)}
-              </select>
               <textarea
                 value={input}
                 onChange={(event) => setInput(event.target.value)}
@@ -851,6 +880,16 @@ function App() {
                   <Database size={18} />
                 </button>
               </div>
+            </div>
+
+            <form className="uploadBox" onSubmit={createKnowledgeBase}>
+              <input value={productName} onChange={(event) => setProductName(event.target.value)} placeholder="产品名称" />
+              <input value={knowledgeBaseName} onChange={(event) => setKnowledgeBaseName(event.target.value)} placeholder="知识库名称，例如：售后资料" />
+              <button type="submit" disabled={!productName.trim() || !knowledgeBaseName.trim()}>新增知识库</button>
+            </form>
+
+            <div className="documentList">
+              {knowledgeBases.map((item) => <div className="documentItem" key={item.id}><div className="documentBody"><strong>{item.product_name} · {item.name}</strong><small>{item.is_enabled ? "已启用" : "已停用"}</small></div></div>)}
             </div>
 
             <form className="uploadBox" onSubmit={handleUpload}>
