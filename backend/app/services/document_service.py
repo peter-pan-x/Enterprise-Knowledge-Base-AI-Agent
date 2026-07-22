@@ -485,6 +485,10 @@ def create_knowledge_base(request: KnowledgeBaseCreate) -> KnowledgeBaseRecord:
 def update_knowledge_base(knowledge_base_id: str, request: KnowledgeBaseUpdate) -> KnowledgeBaseRecord:
     current = get_knowledge_base(knowledge_base_id)
     updated = current.model_copy(update=request.model_dump(exclude_none=True))
+    if current.is_enabled and not updated.is_enabled:
+        enabled_count = sum(1 for item in list_knowledge_bases() if item.is_enabled)
+        if enabled_count <= 1:
+            raise DocumentServiceError("至少需要保留一个启用的知识库")
     with _document_connection() as connection:
         connection.execute("UPDATE knowledge_bases SET name=?, product_name=?, description=?, is_enabled=? WHERE id=?",
             (updated.name, updated.product_name, updated.description, int(updated.is_enabled), updated.id))

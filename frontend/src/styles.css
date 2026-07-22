@@ -545,9 +545,10 @@ button {
 
 .sourceItem {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 9px 10px;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 10px;
   border-radius: 8px;
   background: #f8fafc;
   color: #334155;
@@ -559,10 +560,14 @@ button {
 }
 
 .sourceItem span,
-.sourceItem small {
+.moreSources {
   color: #64748b;
   font-size: 12px;
   line-height: 1.5;
+}
+
+.moreSources {
+  padding-left: 2px;
 }
 
 .feedback button,
@@ -669,6 +674,90 @@ button {
   display: grid;
   grid-template-columns: 1fr 104px;
   gap: 10px;
+}
+
+.knowledgeBaseForm {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.knowledgeBaseForm input {
+  min-width: 0;
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+}
+
+.knowledgeBaseFormActions {
+  display: flex;
+  gap: 8px;
+}
+
+.knowledgeBaseFormActions button,
+.secondaryAction,
+.dangerAction {
+  min-height: 34px;
+  padding: 0 10px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.knowledgeBaseFormActions button {
+  background: #0f766e;
+  color: #fff;
+}
+
+.servicePolicyForm {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+  padding: 16px;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.servicePolicyForm h2,
+.servicePolicyForm button,
+.widePolicyField {
+  grid-column: 1 / -1;
+}
+
+.servicePolicyForm label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.servicePolicyForm input,
+.servicePolicyForm textarea {
+  padding: 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  font: inherit;
+  font-weight: 400;
+}
+
+.servicePolicyForm textarea { min-height: 64px; resize: vertical; }
+.servicePolicyForm button { width: fit-content; min-height: 36px; padding: 0 12px; border-radius: 8px; background: #0f766e; color: #fff; cursor: pointer; }
+.servicePolicyForm .policyCheckbox { flex-direction: row; align-items: center; font-weight: 600; }
+.servicePolicyForm .policyCheckbox input { width: 16px; height: 16px; }
+
+.secondaryAction {
+  background: #f8fafc !important;
+  border: 1px solid #cbd5e1;
+  color: #475569 !important;
+}
+
+.dangerAction {
+  background: #fee2e2 !important;
+  color: #991b1b !important;
 }
 
 .uploadBox label {
@@ -785,6 +874,24 @@ button {
   color: #991b1b;
 }
 
+.retrievalStatus {
+  width: fit-content;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 12px !important;
+  font-weight: 700;
+}
+
+.retrievalStatus.enabled {
+  background: #ccfbf1;
+  color: #0f766e;
+}
+
+.retrievalStatus.disabled {
+  background: #f1f5f9;
+  color: #64748b;
+}
+
 .documentActions {
   display: flex;
   gap: 8px;
@@ -804,6 +911,12 @@ button {
   padding: 0;
   background: #fee2e2;
   color: #991b1b;
+}
+
+.knowledgeBaseItem .documentActions button:last-child:not(.dangerAction) {
+  width: auto;
+  background: #f8fafc;
+  color: #475569;
 }
 
 .documentActions button:disabled {

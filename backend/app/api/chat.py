@@ -7,8 +7,9 @@ from fastapi.responses import StreamingResponse
 from app.schemas.chat import ChatRequest, ChatResponse
 from app.services.llm_service import stream_chat_completion
 from app.services.rag_service import search_knowledge_base
-from app.services.customer_service import complete_exchange, get_conversation, record_tool_call, start_exchange
+from app.services.customer_service import complete_exchange, create_handoff, get_conversation, record_tool_call, start_exchange
 from app.services.tool_service import handle_tool_request
+from app.services.service_policy_service import get_service_policy, keyword_matches
 from app.services.auth_service import CurrentUser, get_current_user
 from app.services.audit_service import record_generation_trace
 from app.core.config import settings
@@ -42,12 +43,15 @@ async def chat(request: ChatRequest, user: CurrentUser = Depends(get_current_use
             tool_name=tool_execution.tool_name,
         )
     sources = search_knowledge_base(request.message, knowledge_base_id=request.knowledge_base_id, category=request.category)
+    policy = get_service_policy()
     chunks: list[str] = []
     async for chunk in stream_chat_completion(request, sources):
         chunks.append(chunk)
     answer = "".join(chunks)
     record_generation_trace(request.message, answer, len(sources), int((time.perf_counter() - started_at) * 1000), settings.llm_model)
     complete_exchange(user.id, conversation_id, assistant_message_id, answer, sources, request.message)
+    if not sources and policy.auto_handoff_on_no_answer:
+        create_handoff(user.id, conversation_id, assistant_message_id, "知识库未命中自动转人工")
     return ChatResponse(
         answer=answer,
         sources=sources,
@@ -75,8 +79,20 @@ async def chat_stream(request: ChatRequest, user: CurrentUser = Depends(get_curr
     async def event_stream():
         started_at = time.perf_counter()
         conversation_id, _, assistant_message_id = start_exchange(user.id, request.conversation_id, request.message)
+        exchange_completed = False
         try:
             tool_execution = handle_tool_request(request.message)
+            policy = get_service_policy()
+            if keyword_matches(request.message, policy.handoff_keywords) or keyword_matches(request.message, policy.sensitive_keywords):
+                metadata = {"type": "sources", "sources": [], "conversation_id": conversation_id, "assistant_message_id": assistant_message_id}
+                yield f"data: {json.dumps(metadata, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'delta', 'content': policy.handoff_message}, ensure_ascii=False)}\n\n"
+                complete_exchange(user.id, conversation_id, assistant_message_id, policy.handoff_message, [], request.message)
+                exchange_completed = True
+                handoff = create_handoff(user.id, conversation_id, assistant_message_id, "客服策略自动转人工")
+                yield f"data: {json.dumps({'type': 'handoff', 'handoff_id': handoff['id']}, ensure_ascii=False)}\n\n"
+                yield 'data: {"type":"done"}\n\n'
+                return
             if tool_execution:
                 record_tool_call(
                     user.id, conversation_id, tool_execution.tool_name, tool_execution.arguments, tool_execution.result
@@ -99,9 +115,11 @@ async def chat_stream(request: ChatRequest, user: CurrentUser = Depends(get_curr
                     request.message,
                     resolved_by_tool=True,
                 )
+                exchange_completed = True
                 yield 'data: {"type":"done"}\n\n'
                 return
             sources = search_knowledge_base(request.message, knowledge_base_id=request.knowledge_base_id, category=request.category)
+            needs_automatic_handoff = not sources and policy.auto_handoff_on_no_answer
             sources_payload = [source.model_dump(mode="json") for source in sources]
             yield f"data: {json.dumps({'type': 'sources', 'sources': sources_payload, 'conversation_id': conversation_id, 'assistant_message_id': assistant_message_id}, ensure_ascii=False)}\n\n"
             chunks: list[str] = []
@@ -110,11 +128,16 @@ async def chat_stream(request: ChatRequest, user: CurrentUser = Depends(get_curr
                 payload = json.dumps({"type": "delta", "content": chunk}, ensure_ascii=False)
                 yield f"data: {payload}\n\n"
             complete_exchange(user.id, conversation_id, assistant_message_id, "".join(chunks), sources, request.message)
+            exchange_completed = True
             record_generation_trace(request.message, "".join(chunks), len(sources), int((time.perf_counter() - started_at) * 1000), settings.llm_model)
+            if needs_automatic_handoff:
+                automatic_handoff = create_handoff(user.id, conversation_id, assistant_message_id, "知识库未命中自动转人工")
+                yield f"data: {json.dumps({'type': 'handoff', 'handoff_id': automatic_handoff['id']}, ensure_ascii=False)}\n\n"
             yield 'data: {"type":"done"}\n\n'
         except Exception:
             fallback = "抱歉，本次回答生成失败，请稍后重试。"
-            complete_exchange(user.id, conversation_id, assistant_message_id, fallback, [], request.message)
+            if not exchange_completed:
+                complete_exchange(user.id, conversation_id, assistant_message_id, fallback, [], request.message)
             yield f"data: {json.dumps({'type': 'error', 'message': fallback}, ensure_ascii=False)}\n\n"
             yield 'data: {"type":"done"}\n\n'
 

@@ -9,6 +9,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from app.schemas.tools import OrderStatusResponse, TicketResponse, ToolCallRecord
+from app.services.integration_service import get_business_adapter
 
 TOOL_LOG_PATH = Path(__file__).resolve().parents[2] / "data" / "tool_logs.json"
 _TOOL_LOCK = threading.RLock()
@@ -33,6 +34,11 @@ class ToolExecution:
 
 
 def get_order_status(order_id: str) -> OrderStatusResponse:
+    adapter = get_business_adapter()
+    if adapter is not None:
+        order = OrderStatusResponse.model_validate(adapter.order_status(order_id))
+        _try_append_tool_log("get_order_status", {"order_id": order_id}, order.model_dump(mode="json"))
+        return order
     order = MOCK_ORDERS.get(order_id)
     if order is None:
         raise ToolServiceError("未找到该订单")
@@ -41,6 +47,11 @@ def get_order_status(order_id: str) -> OrderStatusResponse:
 
 
 def create_ticket(description: str) -> TicketResponse:
+    adapter = get_business_adapter()
+    if adapter is not None:
+        ticket = TicketResponse.model_validate(adapter.create_ticket(description))
+        _try_append_tool_log("create_ticket", {"description": description}, ticket.model_dump(mode="json"))
+        return ticket
     ticket = TicketResponse(ticket_id=f"TK-{uuid4().hex[:8].upper()}", status="open", description=description)
     _try_append_tool_log("create_ticket", {"description": description}, ticket.model_dump(mode="json"))
     return ticket

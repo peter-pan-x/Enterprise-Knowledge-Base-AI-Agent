@@ -13,6 +13,8 @@ from app.api.documents import router as documents_router
 from app.api.knowledge_bases import router as knowledge_bases_router
 from app.api.rag import router as rag_router
 from app.api.tools import router as tools_router
+from app.api.service_policy import router as service_policy_router
+from app.api.integrations import router as integrations_router
 from app.core.config import settings
 from app.services.auth_service import initialize_auth_storage
 from app.services.document_service import initialize_document_storage
@@ -68,3 +70,5 @@ app.include_router(rag_router, prefix="/api/rag", tags=["rag"])
 app.include_router(customer_service_router, prefix="/api/customer-service", tags=["customer-service"])
 app.include_router(admin_router, prefix="/api/admin", tags=["admin"])
 app.include_router(tools_router, prefix="/api/tools", tags=["tools"])
+app.include_router(service_policy_router, prefix="/api/service-policy", tags=["service-policy"])
+app.include_router(integrations_router, prefix="/api/integrations", tags=["integrations"])

@@ -6,6 +6,7 @@ import httpx
 from app.core.config import settings
 from app.schemas.chat import ChatRequest
 from app.schemas.rag import RagSource
+from app.services.service_policy_service import get_service_policy
 
 RAG_SYSTEM_PROMPT = """你是企业知识库 AI 客服 Agent。
 你必须优先基于提供的企业知识库片段回答用户问题。
@@ -35,11 +36,7 @@ async def stream_chat_completion(request: ChatRequest, sources: list[RagSource] 
 
 
 async def _stream_no_context_answer():
-    answer = (
-        "知识库中没有找到与该问题匹配的明确依据。"
-        "为了避免编造答案，我暂时不能直接回答。"
-        "你可以补充相关企业文档，或换一种更具体的问法后再试。"
-    )
+    answer = get_service_policy().no_answer_message
     for token in answer:
         await asyncio.sleep(0.01)
         yield token
@@ -69,7 +66,8 @@ async def _stream_demo_rag_answer(sources: list[RagSource]):
 
 
 async def _stream_openai_compatible_answer(request: ChatRequest, sources: list[RagSource]):
-    messages = [{"role": "system", "content": RAG_SYSTEM_PROMPT}]
+    policy = get_service_policy()
+    messages = [{"role": "system", "content": f"{RAG_SYSTEM_PROMPT}\n\n企业客服补充规则：\n{policy.assistant_instructions}"}]
     messages.extend(message.model_dump() for message in request.history[-8:])
     messages.append(
         {

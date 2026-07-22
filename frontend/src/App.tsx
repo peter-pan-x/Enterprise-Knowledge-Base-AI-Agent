@@ -73,7 +73,14 @@ type KnowledgeDocument = {
   category: string;
 };
 
-type KnowledgeBase = { id: string; name: string; product_name: string; is_enabled: boolean };
+type KnowledgeBase = {
+  id: string;
+  name: string;
+  product_name: string;
+  description: string;
+  is_enabled: boolean;
+  created_at: string;
+};
 
 type DashboardMetrics = {
   document_count: number;
@@ -84,6 +91,16 @@ type DashboardMetrics = {
 };
 
 type AdminEntry = Record<string, string | number | null>;
+
+type ServicePolicy = {
+  welcome_message: string;
+  no_answer_message: string;
+  handoff_message: string;
+  handoff_keywords: string;
+  sensitive_keywords: string;
+  auto_handoff_on_no_answer: boolean;
+  assistant_instructions: string;
+};
 
 const AUTH_STORAGE_KEY = "knowledge-agent-auth";
 
@@ -165,6 +182,8 @@ function AdminPanel() {
   const [toolLogs, setToolLogs] = useState<AdminEntry[]>([]);
   const [conversationRecords, setConversationRecords] = useState<ConversationSummary[]>([]);
   const [selectedConversation, setSelectedConversation] = useState<{ title: string; messages: Message[] } | null>(null);
+  const [policy, setPolicy] = useState<ServicePolicy | null>(null);
+  const [policySaving, setPolicySaving] = useState(false);
   const [error, setError] = useState("");
 
   async function loadAdminData() {
@@ -177,10 +196,11 @@ function AdminPanel() {
         apiFetch("/api/admin/handoffs"),
         apiFetch("/api/rag/logs"),
         apiFetch("/api/customer-service/conversations"),
-        apiFetch("/api/tools/logs")
+        apiFetch("/api/tools/logs"),
+        apiFetch("/api/service-policy")
       ]);
       if (responses.some((response) => !response.ok)) throw new Error("管理后台数据加载失败");
-      const [metricsData, feedbackData, gapData, handoffData, ragData, conversationData, toolData] = await Promise.all(
+      const [metricsData, feedbackData, gapData, handoffData, ragData, conversationData, toolData, policyData] = await Promise.all(
         responses.map((response) => response.json())
       );
       setMetrics(metricsData);
@@ -190,6 +210,7 @@ function AdminPanel() {
       setRagLogs(ragData.logs);
       setConversationRecords(conversationData.conversations);
       setToolLogs(toolData.logs);
+      setPolicy(policyData);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "管理后台数据加载失败");
     }
@@ -224,6 +245,25 @@ function AdminPanel() {
     setGaps((current) => current.map((item) => item.id === entry.id ? { ...item, status: nextStatus } : item));
   }
 
+  async function savePolicy(event: FormEvent) {
+    event.preventDefault();
+    if (!policy || policySaving) return;
+    setPolicySaving(true);
+    try {
+      const response = await apiFetch("/api/service-policy", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(policy)
+      });
+      if (!response.ok) throw new Error("客服策略保存失败");
+      setPolicy(await response.json() as ServicePolicy);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "客服策略保存失败");
+    } finally {
+      setPolicySaving(false);
+    }
+  }
+
   const cards = metrics
     ? [
         ["文档", metrics.document_count],
@@ -254,6 +294,17 @@ function AdminPanel() {
             </article>
           ))}
         </section>
+        {policy && <form className="servicePolicyForm" onSubmit={savePolicy}>
+          <h2>客服策略与话术</h2>
+          <label>欢迎语<textarea value={policy.welcome_message} onChange={(event) => setPolicy({ ...policy, welcome_message: event.target.value })} /></label>
+          <label>无答案兜底语<textarea value={policy.no_answer_message} onChange={(event) => setPolicy({ ...policy, no_answer_message: event.target.value })} /></label>
+          <label>转人工提示语<textarea value={policy.handoff_message} onChange={(event) => setPolicy({ ...policy, handoff_message: event.target.value })} /></label>
+          <label>自动转人工关键词（英文逗号分隔）<input value={policy.handoff_keywords} onChange={(event) => setPolicy({ ...policy, handoff_keywords: event.target.value })} /></label>
+          <label>敏感词（英文逗号分隔）<input value={policy.sensitive_keywords} onChange={(event) => setPolicy({ ...policy, sensitive_keywords: event.target.value })} /></label>
+          <label className="policyCheckbox"><input type="checkbox" checked={policy.auto_handoff_on_no_answer} onChange={(event) => setPolicy({ ...policy, auto_handoff_on_no_answer: event.target.checked })} />知识库未命中时自动转人工</label>
+          <label className="widePolicyField">模型补充规则<textarea value={policy.assistant_instructions} onChange={(event) => setPolicy({ ...policy, assistant_instructions: event.target.value })} /></label>
+          <button type="submit" disabled={policySaving}>{policySaving ? "保存中" : "保存客服策略"}</button>
+        </form>}
         <div className="adminGrid">
           <section className="adminList">
             <h2>对话记录<span>{conversationRecords.length}</span></h2>
@@ -289,7 +340,7 @@ function AdminPanel() {
                 <strong>{message.role === "user" ? "用户" : "AI"}</strong>
                 <p>{message.content}</p>
                 {message.sources && message.sources.length > 0 && (
-                  <small>引用：{message.sources.map((source) => `${source.filename} · 片段 ${source.chunk_index + 1}`).join("；")}</small>
+                  <small>引用：{message.sources.slice(0, 2).map((source) => source.filename).join("、")}{message.sources.length > 2 ? ` 等 ${message.sources.length} 份文档` : ""}</small>
                 )}
               </article>
             ))}
@@ -322,6 +373,7 @@ function App() {
   const [authChecked, setAuthChecked] = useState(false);
   const [view, setView] = useState<"chat" | "admin">("chat");
   const [messages, setMessages] = useState<Message[]>(starterMessages);
+  const [welcomeMessage, setWelcomeMessage] = useState(starterMessages[0].content);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [input, setInput] = useState("");
@@ -332,6 +384,8 @@ function App() {
   const [documentCategory, setDocumentCategory] = useState("general");
   const [knowledgeBaseName, setKnowledgeBaseName] = useState("");
   const [productName, setProductName] = useState("");
+  const [knowledgeBaseDescription, setKnowledgeBaseDescription] = useState("");
+  const [editingKnowledgeBaseId, setEditingKnowledgeBaseId] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [isReindexing, setIsReindexing] = useState(false);
@@ -396,6 +450,16 @@ function App() {
     }).finally(() => setAuthChecked(true));
     if (session.user.role === "admin") { void loadDocuments(); void loadKnowledgeBases(); }
     void loadConversations();
+  }, [session]);
+
+  useEffect(() => {
+    if (!session) return;
+    void apiFetch("/api/service-policy/public").then(async (response) => {
+      if (!response.ok) return;
+      const policy = await response.json() as Pick<ServicePolicy, "welcome_message">;
+      setWelcomeMessage(policy.welcome_message);
+      setMessages((current) => current.map((message) => message.id === "welcome" ? { ...message, content: policy.welcome_message } : message));
+    });
   }, [session]);
 
   async function handleSubmit(event: FormEvent) {
@@ -475,6 +539,11 @@ function App() {
               )
             );
           }
+          if (eventData.type === "handoff") {
+            setMessages((current) =>
+              current.map((message) => message.id === assistantId ? { ...message, handoffRequested: true } : message)
+            );
+          }
           if (eventData.type === "error") {
             setMessages((current) =>
               current.map((message) =>
@@ -530,24 +599,78 @@ function App() {
     }
   }
 
-  async function createKnowledgeBase(event: FormEvent) {
+  async function saveKnowledgeBase(event: FormEvent) {
     event.preventDefault();
     if (!knowledgeBaseName.trim() || !productName.trim()) return;
     setDocumentError("");
     try {
-      const response = await apiFetch("/api/knowledge-bases", {
-        method: "POST",
+      const isEditing = editingKnowledgeBaseId !== null;
+      const response = await apiFetch(isEditing ? `/api/knowledge-bases/${editingKnowledgeBaseId}` : "/api/knowledge-bases", {
+        method: isEditing ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: knowledgeBaseName.trim(), product_name: productName.trim() })
+        body: JSON.stringify({ name: knowledgeBaseName.trim(), product_name: productName.trim(), description: knowledgeBaseDescription.trim() })
       });
-      if (!response.ok) throw new Error("创建知识库失败");
-      const created = await response.json() as KnowledgeBase;
-      setKnowledgeBases((current) => [created, ...current]);
-      setActiveKnowledgeBase(created.id);
+      if (!response.ok) throw new Error(isEditing ? "更新知识库失败" : "创建知识库失败");
+      const saved = await response.json() as KnowledgeBase;
+      setKnowledgeBases((current) => isEditing ? current.map((item) => item.id === saved.id ? saved : item) : [saved, ...current]);
+      setActiveKnowledgeBase(saved.id);
       setKnowledgeBaseName("");
       setProductName("");
+      setKnowledgeBaseDescription("");
+      setEditingKnowledgeBaseId(null);
     } catch (error) {
-      setDocumentError(error instanceof Error ? error.message : "创建知识库失败");
+      setDocumentError(error instanceof Error ? error.message : "知识库保存失败");
+    }
+  }
+
+  function startKnowledgeBaseEdit(item: KnowledgeBase) {
+    setEditingKnowledgeBaseId(item.id);
+    setKnowledgeBaseName(item.name);
+    setProductName(item.product_name);
+    setKnowledgeBaseDescription(item.description ?? "");
+  }
+
+  function cancelKnowledgeBaseEdit() {
+    setEditingKnowledgeBaseId(null);
+    setKnowledgeBaseName("");
+    setProductName("");
+    setKnowledgeBaseDescription("");
+  }
+
+  async function setKnowledgeBaseEnabled(item: KnowledgeBase) {
+    setDocumentError("");
+    try {
+      const response = await apiFetch(`/api/knowledge-bases/${item.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ is_enabled: !item.is_enabled })
+      });
+      if (!response.ok) throw new Error("更新知识库状态失败");
+      const saved = await response.json() as KnowledgeBase;
+      setKnowledgeBases((current) => current.map((entry) => entry.id === saved.id ? saved : entry));
+      if (!saved.is_enabled && activeKnowledgeBase === saved.id) {
+        const fallback = knowledgeBases.find((entry) => entry.id !== saved.id && entry.is_enabled);
+        if (fallback) setActiveKnowledgeBase(fallback.id);
+      }
+    } catch (error) {
+      setDocumentError(error instanceof Error ? error.message : "更新知识库状态失败");
+    }
+  }
+
+  async function deleteKnowledgeBase(item: KnowledgeBase) {
+    if (item.id === "default" || !window.confirm(`确定删除知识库“${item.product_name} · ${item.name}”吗？其中存在文档时系统会阻止删除。`)) return;
+    setDocumentError("");
+    try {
+      const response = await apiFetch(`/api/knowledge-bases/${item.id}`, { method: "DELETE" });
+      if (!response.ok) {
+        const data = await response.json().catch(() => null);
+        throw new Error(data?.detail ?? "删除知识库失败");
+      }
+      setKnowledgeBases((current) => current.filter((entry) => entry.id !== item.id));
+      if (activeKnowledgeBase === item.id) setActiveKnowledgeBase("default");
+      if (editingKnowledgeBaseId === item.id) cancelKnowledgeBaseEdit();
+    } catch (error) {
+      setDocumentError(error instanceof Error ? error.message : "删除知识库失败");
     }
   }
 
@@ -629,7 +752,7 @@ function App() {
 
   function startNewConversation() {
     if (isStreaming) return;
-    setMessages(starterMessages);
+    setMessages([{ ...starterMessages[0], content: welcomeMessage }]);
     setView("chat");
     setConversationId(null);
     setInput("");
@@ -700,7 +823,7 @@ function App() {
   function logout() {
     localStorage.removeItem(AUTH_STORAGE_KEY);
     setSession(null);
-    setMessages(starterMessages);
+    setMessages([{ ...starterMessages[0], content: welcomeMessage }]);
     setConversationId(null);
     setConversations([]);
     setView("chat");
@@ -795,19 +918,15 @@ function App() {
                       <div className="sourceList">
                         <div className="sourceTitle">
                           <Database size={15} />
-                          引用来源
+                          引用来源（{message.sources.length}）
                         </div>
-                        {message.sources.map((source) => (
+                        {message.sources.slice(0, 2).map((source) => (
                           <div className="sourceItem" key={source.chunk_id}>
                             <strong>{source.filename}</strong>
-                            <span>
-                              片段 {source.chunk_index + 1}
-                              {source.page_number ? ` · 第 ${source.page_number} 页` : ""} · 相似度{" "}
-                              {(source.score * 100).toFixed(0)}%
-                            </span>
-                            <small>{source.preview}</small>
+                            {source.page_number && <span>第 {source.page_number} 页</span>}
                           </div>
                         ))}
+                        {message.sources.length > 2 && <small className="moreSources">另有 {message.sources.length - 2} 个命中来源未展开</small>}
                       </div>
                     )}
                     {message.role === "assistant" && message.content && message.serverMessageId && (
@@ -882,19 +1001,37 @@ function App() {
               </div>
             </div>
 
-            <form className="uploadBox" onSubmit={createKnowledgeBase}>
+            <form className="knowledgeBaseForm" onSubmit={saveKnowledgeBase}>
               <input value={productName} onChange={(event) => setProductName(event.target.value)} placeholder="产品名称" />
               <input value={knowledgeBaseName} onChange={(event) => setKnowledgeBaseName(event.target.value)} placeholder="知识库名称，例如：售后资料" />
-              <button type="submit" disabled={!productName.trim() || !knowledgeBaseName.trim()}>新增知识库</button>
+              <input value={knowledgeBaseDescription} onChange={(event) => setKnowledgeBaseDescription(event.target.value)} placeholder="说明（可选），例如：退换货、保修与维修政策" />
+              <div className="knowledgeBaseFormActions">
+                <button type="submit" disabled={!productName.trim() || !knowledgeBaseName.trim()}>{editingKnowledgeBaseId ? "保存知识库" : "新增知识库"}</button>
+                {editingKnowledgeBaseId && <button type="button" className="secondaryAction" onClick={cancelKnowledgeBaseEdit}>取消编辑</button>}
+              </div>
             </form>
 
             <div className="documentList">
-              {knowledgeBases.map((item) => <div className="documentItem" key={item.id}><div className="documentBody"><strong>{item.product_name} · {item.name}</strong><small>{item.is_enabled ? "已启用" : "已停用"}</small></div></div>)}
+              {knowledgeBases.map((item) => {
+                const documentCount = documents.filter((document) => document.knowledge_base_id === item.id).length;
+                return <article className="documentItem knowledgeBaseItem" key={item.id}>
+                  <div className="documentBody">
+                    <strong>{item.product_name} · {item.name}</strong>
+                    {item.description && <small>{item.description}</small>}
+                    <small>{item.is_enabled ? "检索已启用" : "检索已停用"} · {documentCount} 份文档</small>
+                    <div className="documentActions">
+                      <button type="button" onClick={() => void setKnowledgeBaseEnabled(item)}>{item.is_enabled ? "停用知识库" : "启用知识库"}</button>
+                      <button type="button" className="secondaryAction" onClick={() => startKnowledgeBaseEdit(item)}>编辑</button>
+                      {item.id !== "default" && <button type="button" className="dangerAction" onClick={() => void deleteKnowledgeBase(item)}>删除</button>}
+                    </div>
+                  </div>
+                </article>;
+              })}
             </div>
 
             <form className="uploadBox" onSubmit={handleUpload}>
               <select value={activeKnowledgeBase} onChange={(event) => setActiveKnowledgeBase(event.target.value)} aria-label="上传知识库">
-                {knowledgeBases.map((item) => <option key={item.id} value={item.id}>{item.product_name} · {item.name}</option>)}
+                {knowledgeBases.filter((item) => item.is_enabled).map((item) => <option key={item.id} value={item.id}>{item.product_name} · {item.name}</option>)}
               </select>
               <input value={documentCategory} onChange={(event) => setDocumentCategory(event.target.value)} placeholder="分类：售前/售后/原料/证书" />
               <label>
@@ -927,6 +1064,9 @@ function App() {
                       <strong>{document.filename}</strong>
                       <span>
                         {formatFileSize(document.size_bytes)} · 解析文本 {document.text_length} 字
+                      </span>
+                      <span className={`retrievalStatus ${document.is_enabled ? "enabled" : "disabled"}`}>
+                        {document.is_enabled ? "检索已启用" : "检索已停用"}
                       </span>
                       <span className={`docStatus ${document.status}`}>
                         {document.status === "processed"
